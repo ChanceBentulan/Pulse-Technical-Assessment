@@ -1,21 +1,26 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import "mapbox-gl/dist/mapbox-gl.css";
-import type { Map as MapboxMap, Marker } from "mapbox-gl";
+import type { Map as MapboxMap, Marker, Popup } from "mapbox-gl";
 import type { PeerDot } from "@/lib/types";
+import { displayName, sharedTags } from "@/lib/profile";
 import MapLegend from "./MapLegend";
+import TagList from "./TagList";
 
 const TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN ?? "pk.eyJ1IjoicHVsc2UtbWFwIiwiYSI6ImNrMDBkZW1vMDAwMDAwMDAifQ.AAAAAAAAAAAAAAAAAAAAAA";
 
 export default function WorldMap({
   peers,
   me,
+  myTags,
   onPeerClick,
   canConnect,
 }: {
   peers: PeerDot[];
   me: { lat: number; lng: number } | null;
+  myTags: string[];
   onPeerClick: (id: string) => void;
   canConnect: boolean;
 }) {
@@ -25,13 +30,17 @@ export default function WorldMap({
   const meMarkerRef = useRef<Marker | null>(null);
   const [ready, setReady] = useState(false);
 
-  // Marker click handlers are bound once, so read the live click handler +
-  // connectability through refs (synced in an effect, never during render).
-  const onPeerClickRef = useRef(onPeerClick);
-  const canConnectRef = useRef(canConnect);
+  // Tapping a dot opens a profile card (name + interests) anchored to it; the
+  // connection request is sent from the card. The card is React content
+  // portalled into a Mapbox Popup, so user-supplied text is never set as HTML.
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selectedIdRef = useRef<string | null>(null);
+  const popupRef = useRef<Popup | null>(null);
+  const [popupNode] = useState<HTMLDivElement | null>(() =>
+    typeof document === "undefined" ? null : document.createElement("div"),
+  );
   useEffect(() => {
-    onPeerClickRef.current = onPeerClick;
-    canConnectRef.current = canConnect;
+    selectedIdRef.current = selectedId;
   });
 
   // Initialise the map once.
@@ -60,6 +69,8 @@ export default function WorldMap({
 
     return () => {
       cancelled = true;
+      popupRef.current?.remove();
+      popupRef.current = null;
       markers.forEach((m) => m.remove());
       markers.clear();
       meMarkerRef.current?.remove();
@@ -120,9 +131,9 @@ export default function WorldMap({
           el.className = "pulse-dot";
           el.addEventListener("click", (e) => {
             e.stopPropagation();
-            // Busy peers would just auto-decline, so don't send a request.
+            // Busy peers would just auto-decline, so there's nothing to open.
             if (el.classList.contains("pulse-dot--busy")) return;
-            if (canConnectRef.current) onPeerClickRef.current(peer.id);
+            setSelectedId((cur) => (cur === peer.id ? null : peer.id));
           });
           marker = new mapboxgl.Marker({ element: el })
             .setLngLat([peer.lng, peer.lat])
@@ -131,7 +142,12 @@ export default function WorldMap({
         }
         const el = marker.getElement();
         el.classList.toggle("pulse-dot--busy", peer.busy);
-        el.title = peer.busy ? "Busy — in a chat" : "Tap to connect";
+        el.title = peer.busy
+          ? `${displayName(peer.name)} — busy`
+          : `${displayName(peer.name)} — tap to say hi`;
+        el.setAttribute("aria-label", el.title);
+        // Close the card if its peer just got busy.
+        if (peer.busy && selectedIdRef.current === peer.id) setSelectedId(null);
       }
 
       // Drop markers for peers that went offline / got filtered out.
@@ -139,6 +155,7 @@ export default function WorldMap({
         if (!seen.has(id)) {
           marker.remove();
           markers.delete(id);
+          if (selectedIdRef.current === id) setSelectedId(null);
         }
       }
     })();
@@ -147,6 +164,50 @@ export default function WorldMap({
       cancelled = true;
     };
   }, [peers, ready]);
+
+  // Open / move / close the profile popup for the selected dot.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready || !popupNode) return;
+    const marker = selectedId ? markersRef.current.get(selectedId) : undefined;
+    if (!marker) {
+      popupRef.current?.remove();
+      popupRef.current = null;
+      return;
+    }
+    let cancelled = false;
+
+    (async () => {
+      const mapboxgl = (await import("mapbox-gl")).default;
+      if (cancelled) return;
+      if (!popupRef.current) {
+        const popup = new mapboxgl.Popup({
+          offset: 14,
+          closeButton: false,
+          maxWidth: "260px",
+          className: "pulse-popup",
+        }).setDOMContent(popupNode);
+        // Fires on map click / programmatic remove → keep React state in sync.
+        popup.on("close", () => {
+          if (popupRef.current === popup) popupRef.current = null;
+          setSelectedId(null);
+        });
+        popupRef.current = popup;
+      }
+      const popup = popupRef.current;
+      popup.setLngLat(marker.getLngLat());
+      // addTo() on an open popup removes it first (firing "close"), which
+      // would clear the selection when switching dots — so only add if closed.
+      if (!popup.isOpen()) popup.addTo(map);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedId, ready, popupNode]);
+
+  const selected = peers.find((p) => p.id === selectedId) ?? null;
+  const shared = selected ? sharedTags(selected.tags, myTags).size : 0;
 
   return (
     <div className="absolute inset-0">
@@ -161,6 +222,74 @@ export default function WorldMap({
           </p>
         </div>
       )}
+
+      {popupNode &&
+        selected &&
+        createPortal(
+          <div className="w-60 text-zinc-100">
+            <div className="flex items-center gap-3">
+              <div
+                aria-hidden
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-emerald-300 to-teal-500 text-base font-bold text-zinc-950 ring-2 ring-emerald-400/30"
+              >
+                {selected.name ? selected.name.charAt(0).toUpperCase() : "?"}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-base font-semibold leading-tight text-white">
+                  {displayName(selected.name)}
+                </p>
+                <p className="mt-0.5 flex items-center gap-1.5 text-xs text-emerald-300">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                  Available to chat
+                </p>
+              </div>
+              <button
+                onClick={() => popupRef.current?.remove()}
+                aria-label="Close"
+                className="flex h-7 w-7 shrink-0 items-center justify-center self-start rounded-full text-zinc-500 transition hover:bg-zinc-800 hover:text-zinc-200"
+              >
+                <svg
+                  viewBox="0 0 16 16"
+                  className="h-3.5 w-3.5"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  aria-hidden
+                >
+                  <path d="M4 4l8 8M12 4l-8 8" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="mt-3 border-t border-zinc-800 pt-3">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                {shared > 0
+                  ? `Interests · ${shared} in common`
+                  : "Interests"}
+              </p>
+              {selected.tags.length > 0 ? (
+                <TagList tags={selected.tags} myTags={myTags} className="mt-2" />
+              ) : (
+                <p className="mt-1.5 text-xs italic text-zinc-500">
+                  Nothing listed — say hi and find out.
+                </p>
+              )}
+            </div>
+
+            <button
+              onClick={() => {
+                onPeerClick(selected.id);
+                popupRef.current?.remove();
+              }}
+              disabled={!canConnect}
+              className="mt-4 w-full rounded-full bg-emerald-400 px-3 py-2 text-sm font-semibold text-zinc-950 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-400"
+            >
+              {canConnect ? "Say hi 👋" : "End your current chat first"}
+            </button>
+          </div>,
+          popupNode,
+        )}
 
       <MapLegend
         available={peers.filter((p) => !p.busy).length}

@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { displayName } from "@/lib/profile";
+import TagList from "./TagList";
 
 export interface ChatMessage {
   id: number;
@@ -9,6 +11,9 @@ export interface ChatMessage {
 }
 
 export default function ChatPanel({
+  peerName,
+  peerTags,
+  myTags,
   messages,
   connected,
   videoBusy,
@@ -16,6 +21,9 @@ export default function ChatPanel({
   onStartVideo,
   onEnd,
 }: {
+  peerName: string | null;
+  peerTags: string[];
+  myTags: string[];
   messages: ChatMessage[];
   connected: boolean;
   videoBusy: boolean;
@@ -40,14 +48,15 @@ export default function ChatPanel({
 
   return (
     <div className="absolute inset-y-0 right-0 z-20 flex w-full max-w-md flex-col border-l border-zinc-800 bg-zinc-950 text-zinc-100 shadow-2xl">
-      <header className="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
-        <div>
-          <p className="font-semibold">Stranger</p>
+      <header className="flex items-start justify-between gap-3 border-b border-zinc-800 px-4 py-3">
+        <div className="min-w-0">
+          <p className="truncate font-semibold">{displayName(peerName)}</p>
           <p className="text-xs text-zinc-500">
             {connected ? "Connected" : "Connecting…"}
           </p>
+          <TagList tags={peerTags} myTags={myTags} className="mt-1.5" />
         </div>
-        <div className="flex gap-2">
+        <div className="flex shrink-0 gap-2">
           <button
             onClick={onStartVideo}
             disabled={!connected || videoBusy}

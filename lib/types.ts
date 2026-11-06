@@ -15,6 +15,8 @@ export interface PeerDot {
   lat: number;
   lng: number;
   busy: boolean;
+  name: string | null;
+  tags: string[];
 }
 
 export interface SignalMsg {
