@@ -8,21 +8,38 @@ import TagList from "./TagList";
 
 // Collapsible table of everyone online. Picking a row flies the map to that
 // person's dot and opens their profile card (handled by WorldMap).
+// Interest filters (set from PopularInterests) narrow the list to people with
+// ANY of them, best matches first.
 export default function PeopleList({
-  peers,
+  peers: allPeers,
   myTags,
   selectedId,
   onSelect,
+  filters,
+  onToggleFilter,
 }: {
   peers: PeerDot[];
   myTags: string[];
   selectedId: string | null;
   onSelect: (peer: PeerDot) => void;
+  filters: string[];
+  onToggleFilter: (tag: string) => void;
 }) {
   // Same default as the legend: open on wider screens, collapsed on phones.
   const [open, setOpen] = useState(
     () => typeof window === "undefined" || window.innerWidth >= 640,
   );
+  // Adding a filter pops the list open so you see the result. (Adjusting
+  // state during render on prop change, per React's guidance — no effect.)
+  const [prevCount, setPrevCount] = useState(filters.length);
+  if (filters.length !== prevCount) {
+    setPrevCount(filters.length);
+    if (filters.length > prevCount) setOpen(true);
+  }
+
+  const peers = filters.length
+    ? allPeers.filter((p) => sharedTags(p.tags, filters).size > 0)
+    : allPeers;
   // Only look countries up while the list is actually shown.
   const countries = useCountries(peers, open);
 
@@ -31,21 +48,30 @@ export default function PeopleList({
       <button
         onClick={() => setOpen(true)}
         aria-label="Show people online"
-        className="absolute right-4 top-4 z-10 flex items-center gap-2 rounded-full bg-zinc-900/80 px-3 py-1.5 text-xs font-medium text-zinc-200 shadow-lg backdrop-blur hover:bg-zinc-800/90"
+        className="flex items-center gap-2 rounded-full bg-zinc-900/80 px-3 py-1.5 text-xs font-medium text-zinc-200 shadow-lg backdrop-blur hover:bg-zinc-800/90"
       >
         <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
         People
+        {filters.length > 0 && (
+          <span className="text-emerald-300">filtered</span>
+        )}
         <span className="tabular-nums text-zinc-400">({peers.length})</span>
       </button>
     );
   }
 
-  // Available first, then most interests in common, then by name.
+  // Available first, then most filters matched, then most interests in
+  // common with you, then by name.
   const rows = peers
-    .map((p) => ({ peer: p, shared: sharedTags(p.tags, myTags).size }))
+    .map((p) => ({
+      peer: p,
+      shared: sharedTags(p.tags, myTags).size,
+      matched: sharedTags(p.tags, filters).size,
+    }))
     .sort(
       (a, b) =>
         Number(a.peer.busy) - Number(b.peer.busy) ||
+        b.matched - a.matched ||
         b.shared - a.shared ||
         displayName(a.peer.name).localeCompare(displayName(b.peer.name)),
     );
@@ -53,7 +79,7 @@ export default function PeopleList({
   return (
     <aside
       aria-label="People online"
-      className="absolute right-4 top-4 z-10 flex max-h-[calc(100%-5rem)] w-64 flex-col rounded-2xl border border-zinc-800/80 bg-zinc-900/85 text-zinc-200 shadow-2xl backdrop-blur"
+      className="flex min-h-0 w-64 flex-col rounded-2xl border border-zinc-800/80 bg-zinc-900/85 text-zinc-200 shadow-2xl backdrop-blur"
     >
       <div className="flex items-center justify-between px-4 pb-2 pt-4">
         <h2 className="text-sm font-semibold text-zinc-100">
@@ -71,9 +97,31 @@ export default function PeopleList({
         </button>
       </div>
 
+      {filters.length > 0 && (
+        <ul className="flex flex-wrap gap-1 px-4 pb-2">
+          {filters.map((f) => (
+            <li
+              key={f}
+              className="inline-flex max-w-full items-center gap-1 rounded-full bg-emerald-400/15 py-0.5 pl-2 pr-1 text-[11px] font-medium text-emerald-300 ring-1 ring-emerald-400/40"
+            >
+              <span className="truncate">#{f}</span>
+              <button
+                onClick={() => onToggleFilter(f)}
+                aria-label={`Remove #${f} filter`}
+                className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full leading-none hover:bg-emerald-400/20"
+              >
+                ×
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
       {rows.length === 0 ? (
         <p className="px-4 pb-4 text-xs italic text-zinc-500">
-          No one else is here yet.
+          {filters.length
+            ? "No one else online matches these interests right now."
+            : "No one else is here yet."}
         </p>
       ) : (
         <div className="min-h-0 overflow-y-auto px-2 pb-2">

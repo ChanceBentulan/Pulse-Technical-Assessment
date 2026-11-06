@@ -8,6 +8,7 @@ import type { PeerDot } from "@/lib/types";
 import { displayName, sharedTags } from "@/lib/profile";
 import MapLegend from "./MapLegend";
 import PeopleList from "./PeopleList";
+import PopularInterests from "./PopularInterests";
 import TagList from "./TagList";
 
 const TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN ?? "pk.eyJ1IjoicHVsc2UtbWFwIiwiYSI6ImNrMDBkZW1vMDAwMDAwMDAifQ.AAAAAAAAAAAAAAAAAAAAAA";
@@ -35,6 +36,13 @@ export default function WorldMap({
   // connection request is sent from the card. The card is React content
   // portalled into a Mapbox Popup, so user-supplied text is never set as HTML.
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Interests selected in PopularInterests: narrow the PeopleList (match any)
+  // and hide non-matching dots on the map.
+  const [interestFilters, setInterestFilters] = useState<string[]>([]);
+  const toggleInterest = (tag: string) =>
+    setInterestFilters((cur) =>
+      cur.includes(tag) ? cur.filter((t) => t !== tag) : [...cur, tag],
+    );
   const selectedIdRef = useRef<string | null>(null);
   const popupRef = useRef<Popup | null>(null);
   const [popupNode] = useState<HTMLDivElement | null>(() =>
@@ -125,6 +133,14 @@ export default function WorldMap({
       const seen = new Set<string>();
 
       for (const peer of peers) {
+        // Peers matching none of the selected interests get no marker at all
+        // (removed below, which also closes their card if it's open).
+        if (
+          interestFilters.length > 0 &&
+          sharedTags(peer.tags, interestFilters).size === 0
+        ) {
+          continue;
+        }
         seen.add(peer.id);
         let marker = markers.get(peer.id);
         if (!marker) {
@@ -151,7 +167,7 @@ export default function WorldMap({
         if (peer.busy && selectedIdRef.current === peer.id) setSelectedId(null);
       }
 
-      // Drop markers for peers that went offline / got filtered out.
+      // Drop markers for peers that went offline or are filtered out.
       for (const [id, marker] of markers) {
         if (!seen.has(id)) {
           marker.remove();
@@ -164,7 +180,7 @@ export default function WorldMap({
     return () => {
       cancelled = true;
     };
-  }, [peers, ready]);
+  }, [peers, ready, interestFilters]);
 
   // Open / move / close the profile popup for the selected dot.
   useEffect(() => {
@@ -309,12 +325,31 @@ export default function WorldMap({
         canConnect={canConnect}
       />
 
-      <PeopleList
-        peers={peers}
-        myTags={myTags}
-        selectedId={selectedId}
-        onSelect={focusPeer}
-      />
+      {/* Top-right panels: people on the far right, interests to its
+          left (stacked under it on phones).
+          The wrapper ignores pointer events so the map stays usable around
+          the panels; bottom-16 keeps them clear of the attribution. */}
+      <div className="pointer-events-none absolute bottom-16 right-4 top-4 z-10 flex flex-col items-end gap-2 sm:flex-row-reverse sm:items-start">
+        <div className="pointer-events-auto flex max-h-full min-h-0 flex-col">
+          <PeopleList
+            peers={peers}
+            myTags={myTags}
+            selectedId={selectedId}
+            onSelect={focusPeer}
+            filters={interestFilters}
+            onToggleFilter={toggleInterest}
+          />
+        </div>
+        <div className="pointer-events-auto flex max-h-full min-h-0 flex-col">
+          <PopularInterests
+            peers={peers}
+            myTags={myTags}
+            filters={interestFilters}
+            onToggle={toggleInterest}
+            onClear={() => setInterestFilters([])}
+          />
+        </div>
+      </div>
 
       {/* Online count */}
       <div className="absolute bottom-4 left-4 rounded-full bg-zinc-900/80 px-3 py-1.5 text-xs text-zinc-300 backdrop-blur">
