@@ -86,6 +86,9 @@ export default function Home() {
       onRemoteStream: (stream) => setRemoteStream(stream),
       onConnectionState: (state) => {
         if (state === "failed") {
+          // Tell the server so both busy flags are cleared — otherwise the
+          // survivor of a dropped call stays "busy" and unreachable forever.
+          void sendSignal(sessionId, peerId, "end");
           teardown("Connection failed (network).");
         }
       },
