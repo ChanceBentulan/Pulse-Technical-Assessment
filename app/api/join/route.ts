@@ -43,5 +43,9 @@ export async function POST(request: NextRequest) {
     },
   });
 
-  return Response.json({ ok: true });
+  // Hand the offset coords back so the client can re-register with the SAME
+  // position via /api/poll if its row is ever reaped. Re-joining would roll a
+  // fresh random offset, and many samples could be averaged back to the raw
+  // location.
+  return Response.json({ ok: true, lat: offset.lat, lng: offset.lng });
 }
