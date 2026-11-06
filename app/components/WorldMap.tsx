@@ -4,16 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import "mapbox-gl/dist/mapbox-gl.css";
 import type { Map as MapboxMap, Marker } from "mapbox-gl";
 import type { PeerDot } from "@/lib/types";
+import MapLegend from "./MapLegend";
 
 const TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN ?? "pk.eyJ1IjoicHVsc2UtbWFwIiwiYSI6ImNrMDBkZW1vMDAwMDAwMDAifQ.AAAAAAAAAAAAAAAAAAAAAA";
-
-function dotColor(id: string): string {
-  let hash = 0;
-  for (let i = 0; i < id.length; i++) {
-    hash = (hash * 31 + id.charCodeAt(i)) | 0;
-  }
-  return `hsl(${Math.abs(hash) % 360}, 70%, 60%)`;
-}
 
 export default function WorldMap({
   peers,
@@ -125,10 +118,10 @@ export default function WorldMap({
         if (!marker) {
           const el = document.createElement("button");
           el.className = "pulse-dot";
-          el.style.background = dotColor(peer.id);
-          el.title = "Tap to connect";
           el.addEventListener("click", (e) => {
             e.stopPropagation();
+            // Busy peers would just auto-decline, so don't send a request.
+            if (el.classList.contains("pulse-dot--busy")) return;
             if (canConnectRef.current) onPeerClickRef.current(peer.id);
           });
           marker = new mapboxgl.Marker({ element: el })
@@ -136,7 +129,9 @@ export default function WorldMap({
             .addTo(map);
           markers.set(peer.id, marker);
         }
-        marker.getElement().style.opacity = peer.busy ? "0.35" : "1";
+        const el = marker.getElement();
+        el.classList.toggle("pulse-dot--busy", peer.busy);
+        el.title = peer.busy ? "Busy — in a chat" : "Tap to connect";
       }
 
       // Drop markers for peers that went offline / got filtered out.
@@ -166,6 +161,12 @@ export default function WorldMap({
           </p>
         </div>
       )}
+
+      <MapLegend
+        available={peers.filter((p) => !p.busy).length}
+        busy={peers.filter((p) => p.busy).length}
+        canConnect={canConnect}
+      />
 
       {/* Online count */}
       <div className="absolute bottom-4 left-4 rounded-full bg-zinc-900/80 px-3 py-1.5 text-xs text-zinc-300 backdrop-blur">
