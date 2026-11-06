@@ -1,20 +1,37 @@
 // Client-side helpers for talking to the coordination API.
 import type { PollResponse, SignalType } from "@/lib/types";
 
+export type LatLng = { lat: number; lng: number };
+
+// Returns the privacy-offset coords the server stored (null if join failed).
 export async function join(
   id: string,
   lat: number,
   lng: number,
-): Promise<void> {
-  await fetch("/api/join", {
+): Promise<LatLng | null> {
+  const res = await fetch("/api/join", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ id, lat, lng }),
   });
+  if (!res.ok) return null;
+  const data = await res.json();
+  return typeof data?.lat === "number" && typeof data?.lng === "number"
+    ? { lat: data.lat, lng: data.lng }
+    : null;
 }
 
-export async function poll(id: string): Promise<PollResponse> {
-  const res = await fetch(`/api/poll?id=${encodeURIComponent(id)}`, {
+// `offsetLoc` lets the server recreate our presence row if it was reaped.
+export async function poll(
+  id: string,
+  offsetLoc: LatLng | null,
+): Promise<PollResponse> {
+  const qs = new URLSearchParams({ id });
+  if (offsetLoc) {
+    qs.set("lat", String(offsetLoc.lat));
+    qs.set("lng", String(offsetLoc.lng));
+  }
+  const res = await fetch(`/api/poll?${qs}`, {
     cache: "no-store",
   });
   if (!res.ok) throw new Error(`poll failed: ${res.status}`);

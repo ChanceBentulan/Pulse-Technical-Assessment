@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { STALE_MS, SIGNAL_TTL_MS } from "@/lib/presence";
+import { isValidLatLng } from "@/lib/geo";
 import type { PollResponse } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -21,11 +22,22 @@ export async function GET(request: NextRequest) {
   const staleCutoff = new Date(now - STALE_MS);
   const signalCutoff = new Date(now - SIGNAL_TTL_MS);
 
-  // 1) Heartbeat — refresh lastSeen for the caller.
-  await prisma.presence.updateMany({
-    where: {},
-    data: { lastSeen: new Date(now) },
-  });
+  // 1) Heartbeat — refresh lastSeen for the caller only.
+  // If the caller's row is gone (reaped after a throttled background tab, or
+  // removed by a pagehide leave before a back/forward-cache restore), recreate
+  // it from the already-offset coords the client got back from /api/join.
+  const lat = Number(params.get("lat"));
+  const lng = Number(params.get("lng"));
+  const lastSeen = new Date(now);
+  if (params.has("lat") && params.has("lng") && isValidLatLng(lat, lng)) {
+    await prisma.presence.upsert({
+      where: { id },
+      create: { id, lat, lng, busy: false, lastSeen },
+      update: { lastSeen },
+    });
+  } else {
+    await prisma.presence.updateMany({ where: { id }, data: { lastSeen } });
+  }
 
   // 2) Reap stale presence rows and orphaned signals (independent deletes —
   // no atomicity needed, and avoids transactions over a PgBouncer pooler).
