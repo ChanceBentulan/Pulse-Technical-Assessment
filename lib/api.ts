@@ -1,36 +1,45 @@
 // Client-side helpers for talking to the coordination API.
 import type { PollResponse, SignalType } from "@/lib/types";
+import { sanitizeName, sanitizeTags, type Profile } from "@/lib/profile";
 
 export type LatLng = { lat: number; lng: number };
 
-// Returns the privacy-offset coords the server stored (null if join failed).
+// Returns the privacy-offset coords + the sanitised profile the server stored
+// (null if join failed).
 export async function join(
   id: string,
   lat: number,
   lng: number,
-): Promise<LatLng | null> {
+  profile: Profile,
+): Promise<{ loc: LatLng; profile: Profile } | null> {
   const res = await fetch("/api/join", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id, lat, lng }),
+    body: JSON.stringify({ id, lat, lng, name: profile.name, tags: profile.tags }),
   });
   if (!res.ok) return null;
   const data = await res.json();
-  return typeof data?.lat === "number" && typeof data?.lng === "number"
-    ? { lat: data.lat, lng: data.lng }
-    : null;
+  if (typeof data?.lat !== "number" || typeof data?.lng !== "number") return null;
+  return {
+    loc: { lat: data.lat, lng: data.lng },
+    profile: { name: sanitizeName(data.name), tags: sanitizeTags(data.tags) },
+  };
 }
 
-// `offsetLoc` lets the server recreate our presence row if it was reaped.
+// `offsetLoc` + `profile` let the server recreate our presence row (same
+// spot, same name/tags) if it was reaped.
 export async function poll(
   id: string,
   offsetLoc: LatLng | null,
+  profile: Profile | null,
 ): Promise<PollResponse> {
   const qs = new URLSearchParams({ id });
   if (offsetLoc) {
     qs.set("lat", String(offsetLoc.lat));
     qs.set("lng", String(offsetLoc.lng));
   }
+  if (profile?.name) qs.set("name", profile.name);
+  for (const t of profile?.tags ?? []) qs.append("tag", t);
   const res = await fetch(`/api/poll?${qs}`, {
     cache: "no-store",
   });

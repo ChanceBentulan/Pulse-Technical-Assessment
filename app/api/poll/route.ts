@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { STALE_MS, SIGNAL_TTL_MS } from "@/lib/presence";
 import { isValidLatLng } from "@/lib/geo";
+import { sanitizeName, sanitizeTags } from "@/lib/profile";
 import type { PollResponse } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -25,14 +26,23 @@ export async function GET(request: NextRequest) {
   // 1) Heartbeat — refresh lastSeen for the caller only.
   // If the caller's row is gone (reaped after a throttled background tab, or
   // removed by a pagehide leave before a back/forward-cache restore), recreate
-  // it from the already-offset coords the client got back from /api/join.
+  // it from the already-offset coords (and profile) the client got back from
+  // /api/join. Profile params are only used on that recreate path.
   const lat = Number(params.get("lat"));
   const lng = Number(params.get("lng"));
   const lastSeen = new Date(now);
   if (params.has("lat") && params.has("lng") && isValidLatLng(lat, lng)) {
     await prisma.presence.upsert({
       where: { id },
-      create: { id, lat, lng, busy: false, lastSeen },
+      create: {
+        id,
+        lat,
+        lng,
+        busy: false,
+        name: sanitizeName(params.get("name")),
+        tags: sanitizeTags(params.getAll("tag")),
+        lastSeen,
+      },
       update: { lastSeen },
     });
   } else {
@@ -50,7 +60,7 @@ export async function GET(request: NextRequest) {
       id: { not: id },
       lastSeen: { gte: staleCutoff },
     },
-    select: { id: true, lat: true, lng: true, busy: true },
+    select: { id: true, lat: true, lng: true, busy: true, name: true, tags: true },
   });
 
   // 4) Drain this user's mailbox: read, then delete exactly what we read so a
@@ -71,6 +81,8 @@ export async function GET(request: NextRequest) {
       lat: p.lat,
       lng: p.lng,
       busy: p.busy,
+      name: p.name,
+      tags: p.tags,
     })),
     signals: inbox.map((s) => ({
       id: s.id,

@@ -4,12 +4,14 @@ import { useEffect, useRef, useState } from "react";
 import EntryGate from "./components/EntryGate";
 import WorldMap from "./components/WorldMap";
 import ConnectionPrompt from "./components/ConnectionPrompt";
+import TagList from "./components/TagList";
 import ChatPanel, { type ChatMessage } from "./components/ChatPanel";
 import VideoPanel from "./components/VideoPanel";
 import { join, leave, poll, sendSignal, type LatLng } from "@/lib/api";
 import { PeerSession, type DescType, type PeerControl } from "@/lib/webrtc";
 import { POLL_INTERVAL_MS } from "@/lib/presence";
 import { type PeerDot, type SignalMsg } from "@/lib/types";
+import { displayName, type Profile } from "@/lib/profile";
 
 type Conn =
   | { kind: "idle" }
@@ -33,6 +35,9 @@ export default function Home() {
   const [myLocation, setMyLocation] = useState<{ lat: number; lng: number } | null>(
     null,
   );
+  // Own profile (as sanitised by the server) and the current partner's.
+  const [myProfile, setMyProfile] = useState<Profile>({ name: null, tags: [] });
+  const [partner, setPartner] = useState<Profile | null>(null);
 
   const [conn, _setConn] = useState<Conn>({ kind: "idle" });
   const connRef = useRef<Conn>(conn);
@@ -51,9 +56,15 @@ export default function Home() {
   // Server-side privacy-offset position from /api/join; sent with each poll so
   // a reaped presence row is recreated at the same spot.
   const offsetLocRef = useRef<LatLng | null>(null);
+  const profileRef = useRef<Profile | null>(null);
   const peerRef = useRef<PeerSession | null>(null);
   const msgId = useRef(0);
   const requestTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function profileOf(peerId: string): Profile | null {
+    const p = peers.find((d) => d.id === peerId);
+    return p ? { name: p.name, tags: p.tags } : null;
+  }
 
   function showNotice(text: string) {
     setNotice(text);
@@ -72,6 +83,7 @@ export default function Home() {
     setRemoteStream(null);
     setVideo("none");
     setMessages([]);
+    setPartner(null);
     setConn({ kind: "idle" });
     if (message) showNotice(message);
   }
@@ -136,6 +148,7 @@ export default function Home() {
 
   function requestConnection(peerId: string) {
     if (connRef.current.kind !== "idle") return;
+    setPartner(profileOf(peerId));
     setConn({ kind: "requesting", peerId });
     void sendSignal(sessionId, peerId, "request");
     requestTimer.current = setTimeout(() => {
@@ -218,6 +231,7 @@ export default function Home() {
     switch (sig.type) {
       case "request": {
         if (connRef.current.kind === "idle") {
+          setPartner(profileOf(sig.fromId));
           setConn({ kind: "incoming", peerId: sig.fromId });
         } else {
           void sendSignal(sessionId, sig.fromId, "decline");
@@ -264,7 +278,7 @@ export default function Home() {
           c.peerId === sig.fromId
         ) {
           if (c.kind === "incoming") setConn({ kind: "idle" });
-          else teardown("Stranger disconnected.");
+          else teardown(`${displayName(partner?.name)} disconnected.`);
         }
         break;
       }
@@ -283,10 +297,17 @@ export default function Home() {
 
     const tick = async () => {
       try {
-        const data = await poll(sessionId, offsetLocRef.current);
+        const data = await poll(sessionId, offsetLocRef.current, profileRef.current);
         if (!active) return;
         setPeers(data.peers);
         for (const s of data.signals) processSignalRef.current(s);
+        // Keep the partner's name/tags fresh; keep the last known copy if
+        // their row is briefly missing so the header doesn't flicker.
+        const c = connRef.current;
+        if (c.kind !== "idle") {
+          const p = data.peers.find((d) => d.id === c.peerId);
+          if (p) setPartner({ name: p.name, tags: p.tags });
+        }
       } catch {}
       if (active) timer = setTimeout(tick, POLL_INTERVAL_MS);
     };
@@ -309,9 +330,13 @@ export default function Home() {
     };
   }, [sessionId, phase]);
 
-  async function handleReady(lat: number, lng: number) {
+  async function handleReady(lat: number, lng: number, profile: Profile) {
     setMyLocation({ lat, lng });
-    offsetLocRef.current = await join(sessionId, lat, lng);
+    const joined = await join(sessionId, lat, lng, profile);
+    offsetLocRef.current = joined?.loc ?? null;
+    const mine = joined?.profile ?? profile;
+    profileRef.current = mine;
+    setMyProfile(mine);
     setPhase("live");
   }
 
@@ -326,6 +351,7 @@ export default function Home() {
       <WorldMap
         peers={peers}
         me={myLocation}
+        myTags={myProfile.tags}
         onPeerClick={requestConnection}
         canConnect={conn.kind === "idle"}
       />
@@ -350,16 +376,26 @@ export default function Home() {
 
       {conn.kind === "incoming" && (
         <ConnectionPrompt
-          title="A stranger wants to connect"
+          title={`${displayName(partner?.name)} wants to connect`}
+          subtitle={partner?.tags.length ? undefined : "No interests listed."}
           acceptLabel="Accept"
           declineLabel="Decline"
           onAccept={acceptIncoming}
           onDecline={declineIncoming}
-        />
+        >
+          <TagList
+            tags={partner?.tags ?? []}
+            myTags={myProfile.tags}
+            className="mt-3 justify-center"
+          />
+        </ConnectionPrompt>
       )}
 
       {inChat && (
         <ChatPanel
+          peerName={partner?.name ?? null}
+          peerTags={partner?.tags ?? []}
+          myTags={myProfile.tags}
           messages={messages}
           connected={conn.kind === "connected"}
           videoBusy={video !== "none"}
@@ -374,14 +410,14 @@ export default function Home() {
 
       {video === "requesting" && (
         <div className="absolute bottom-24 left-1/2 z-30 -translate-x-1/2 rounded-full bg-zinc-800/90 px-4 py-2 text-sm text-zinc-100 shadow-lg backdrop-blur">
-          Waiting for stranger to accept video…
+          Waiting for {displayName(partner?.name)} to accept video…
         </div>
       )}
 
       {video === "incoming" && (
         <ConnectionPrompt
           title="Start video call?"
-          subtitle="The stranger wants to turn on video."
+          subtitle={`${displayName(partner?.name)} wants to turn on video.`}
           acceptLabel="Accept"
           declineLabel="Decline"
           onAccept={acceptVideo}

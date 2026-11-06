@@ -58,6 +58,36 @@ body {
   transform: none;
 }
 
+/* Dark profile card popup anchored to a dot. */
+.pulse-popup .mapboxgl-popup-content {
+  background: rgba(24, 24, 27, 0.95); /* zinc-900 */
+  border: 1px solid rgba(63, 63, 70, 0.8); /* zinc-700 */
+  border-radius: 16px;
+  padding: 14px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(8px);
+}
+
+.pulse-popup.mapboxgl-popup-anchor-top .mapboxgl-popup-tip,
+.pulse-popup.mapboxgl-popup-anchor-top-left .mapboxgl-popup-tip,
+.pulse-popup.mapboxgl-popup-anchor-top-right .mapboxgl-popup-tip {
+  border-bottom-color: rgba(24, 24, 27, 0.95);
+}
+
+.pulse-popup.mapboxgl-popup-anchor-bottom .mapboxgl-popup-tip,
+.pulse-popup.mapboxgl-popup-anchor-bottom-left .mapboxgl-popup-tip,
+.pulse-popup.mapboxgl-popup-anchor-bottom-right .mapboxgl-popup-tip {
+  border-top-color: rgba(24, 24, 27, 0.95);
+}
+
+.pulse-popup.mapboxgl-popup-anchor-left .mapboxgl-popup-tip {
+  border-right-color: rgba(24, 24, 27, 0.95);
+}
+
+.pulse-popup.mapboxgl-popup-anchor-right .mapboxgl-popup-tip {
+  border-left-color: rgba(24, 24, 27, 0.95);
+}
+
 /* Non-interactive sample dot used in the map legend. */
 .pulse-dot--static {
   display: inline-block;

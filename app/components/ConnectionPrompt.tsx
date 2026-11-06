@@ -1,5 +1,7 @@
 "use client";
 
+import type { ReactNode } from "react";
+
 // Reusable centered prompt for "someone wants to connect" and
 // "someone wants to start video".
 export default function ConnectionPrompt({
@@ -9,9 +11,11 @@ export default function ConnectionPrompt({
   declineLabel,
   onAccept,
   onDecline,
+  children,
 }: {
   title: string;
   subtitle?: string;
+  children?: ReactNode;
   acceptLabel: string;
   declineLabel: string;
   onAccept: () => void;
@@ -22,6 +26,7 @@ export default function ConnectionPrompt({
       <div className="w-full max-w-xs rounded-2xl bg-zinc-900 p-6 text-center text-zinc-100 shadow-xl">
         <h2 className="text-lg font-semibold">{title}</h2>
         {subtitle && <p className="mt-1 text-sm text-zinc-400">{subtitle}</p>}
+        {children}
         <div className="mt-5 flex gap-3">
           <button
             onClick={onDecline}

@@ -16,6 +16,8 @@ model Presence {
   lat      Float // ALREADY privacy-offset coords (raw is never stored)
   lng      Float
   busy     Boolean  @default(false) // true while in an active connection
+  name     String? // optional display name (sanitised server-side)
+  tags     String[] @default([]) // interest tags (sanitised server-side)
   lastSeen DateTime
 
   @@index([lastSeen])
