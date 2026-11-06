@@ -8,15 +8,18 @@ import TagList from "./TagList";
 
 // Collapsible table of everyone online. Picking a row flies the map to that
 // person's dot and opens their profile card (handled by WorldMap).
-// Interest filters (set from PopularInterests) narrow the list to people with
-// ANY of them, best matches first.
+// Receives peers already narrowed by the interest (match any) and distance
+// filters in WorldMap; shows the active filters as removable chips and sorts
+// best interest matches first.
 export default function PeopleList({
-  peers: allPeers,
+  peers,
   myTags,
   selectedId,
   onSelect,
   filters,
   onToggleFilter,
+  radiusLabel,
+  onClearRadius,
 }: {
   peers: PeerDot[];
   myTags: string[];
@@ -24,6 +27,8 @@ export default function PeopleList({
   onSelect: (peer: PeerDot) => void;
   filters: string[];
   onToggleFilter: (tag: string) => void;
+  radiusLabel: string | null;
+  onClearRadius: () => void;
 }) {
   // Same default as the legend: open on wider screens, collapsed on phones.
   const [open, setOpen] = useState(
@@ -37,9 +42,6 @@ export default function PeopleList({
     if (filters.length > prevCount) setOpen(true);
   }
 
-  const peers = filters.length
-    ? allPeers.filter((p) => sharedTags(p.tags, filters).size > 0)
-    : allPeers;
   // Only look countries up while the list is actually shown.
   const countries = useCountries(peers, open);
 
@@ -52,7 +54,7 @@ export default function PeopleList({
       >
         <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
         People
-        {filters.length > 0 && (
+        {(filters.length > 0 || radiusLabel) && (
           <span className="text-emerald-300">filtered</span>
         )}
         <span className="tabular-nums text-zinc-400">({peers.length})</span>
@@ -97,8 +99,20 @@ export default function PeopleList({
         </button>
       </div>
 
-      {filters.length > 0 && (
+      {(filters.length > 0 || radiusLabel) && (
         <ul className="flex flex-wrap gap-1 px-4 pb-2">
+          {radiusLabel && (
+            <li className="inline-flex max-w-full items-center gap-1 rounded-full bg-emerald-400/15 py-0.5 pl-2 pr-1 text-[11px] font-medium text-emerald-300 ring-1 ring-emerald-400/40">
+              <span className="truncate">≤ {radiusLabel}</span>
+              <button
+                onClick={onClearRadius}
+                aria-label="Remove distance filter"
+                className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full leading-none hover:bg-emerald-400/20"
+              >
+                ×
+              </button>
+            </li>
+          )}
           {filters.map((f) => (
             <li
               key={f}
@@ -119,8 +133,8 @@ export default function PeopleList({
 
       {rows.length === 0 ? (
         <p className="px-4 pb-4 text-xs italic text-zinc-500">
-          {filters.length
-            ? "No one else online matches these interests right now."
+          {filters.length || radiusLabel
+            ? "No one else online matches your filters right now."
             : "No one else is here yet."}
         </p>
       ) : (

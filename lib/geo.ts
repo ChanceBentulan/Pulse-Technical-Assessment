@@ -45,3 +45,48 @@ export function isValidLatLng(lat: unknown, lng: unknown): boolean {
     lng <= 180
   );
 }
+
+const EARTH_RADIUS_KM = 6371;
+const toRad = (d: number) => (d * Math.PI) / 180;
+const toDeg = (r: number) => (r * 180) / Math.PI;
+
+// Great-circle distance between two points (haversine), in km.
+export function distanceKm(
+  a: { lat: number; lng: number },
+  b: { lat: number; lng: number },
+): number {
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * EARTH_RADIUS_KM * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+// Ring of [lng, lat] points approximating a circle of `radiusKm` around
+// `center`, for drawing on the map. Longitudes are kept continuous around the
+// center (not wrapped to ±180) so circles crossing the antimeridian render.
+export function circleRing(
+  center: { lat: number; lng: number },
+  radiusKm: number,
+  steps = 128,
+): [number, number][] {
+  const lat1 = toRad(center.lat);
+  const lng1 = toRad(center.lng);
+  const d = radiusKm / EARTH_RADIUS_KM;
+  const ring: [number, number][] = [];
+  for (let i = 0; i <= steps; i++) {
+    const brng = (2 * Math.PI * i) / steps;
+    const lat2 = Math.asin(
+      Math.sin(lat1) * Math.cos(d) + Math.cos(lat1) * Math.sin(d) * Math.cos(brng),
+    );
+    const lng2 =
+      lng1 +
+      Math.atan2(
+        Math.sin(brng) * Math.sin(d) * Math.cos(lat1),
+        Math.cos(d) - Math.sin(lat1) * Math.sin(lat2),
+      );
+    ring.push([toDeg(lng2), toDeg(lat2)]);
+  }
+  return ring;
+}

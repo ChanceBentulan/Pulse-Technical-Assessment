@@ -9,6 +9,8 @@ import { displayName, sharedTags } from "@/lib/profile";
 import MapLegend from "./MapLegend";
 import PeopleList from "./PeopleList";
 import PopularInterests from "./PopularInterests";
+import RadiusFilter, { formatKm } from "./RadiusFilter";
+import { circleRing, distanceKm } from "@/lib/geo";
 import TagList from "./TagList";
 
 const TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN ?? "pk.eyJ1IjoicHVsc2UtbWFwIiwiYSI6ImNrMDBkZW1vMDAwMDAwMDAifQ.AAAAAAAAAAAAAAAAAAAAAA";
@@ -43,6 +45,22 @@ export default function WorldMap({
     setInterestFilters((cur) =>
       cur.includes(tag) ? cur.filter((t) => t !== tag) : [...cur, tag],
     );
+  // Distance filter (km from you); null = any distance.
+  const [radiusKm, setRadiusKm] = useState<number | null>(null);
+
+  // Single source of truth for both filters, shared by the map dots, the
+  // people list and the interest counts. Distance is measured from your real
+  // position to their (1–3 km offset) dot, so edges are fuzzy by a few km.
+  const inRange =
+    radiusKm !== null && me
+      ? peers.filter((p) => distanceKm(me, p) <= radiusKm)
+      : peers;
+  const visible =
+    interestFilters.length > 0
+      ? inRange.filter((p) => sharedTags(p.tags, interestFilters).size > 0)
+      : inRange;
+  const visibleIds = new Set(visible.map((p) => p.id));
+  const visibleKey = [...visibleIds].sort().join(",");
   const selectedIdRef = useRef<string | null>(null);
   const popupRef = useRef<Popup | null>(null);
   const [popupNode] = useState<HTMLDivElement | null>(() =>
@@ -133,14 +151,9 @@ export default function WorldMap({
       const seen = new Set<string>();
 
       for (const peer of peers) {
-        // Peers matching none of the selected interests get no marker at all
-        // (removed below, which also closes their card if it's open).
-        if (
-          interestFilters.length > 0 &&
-          sharedTags(peer.tags, interestFilters).size === 0
-        ) {
-          continue;
-        }
+        // Peers outside the distance / interest filters get no marker at
+        // all (removed below, which also closes their card if it's open).
+        if (!visibleIds.has(peer.id)) continue;
         seen.add(peer.id);
         let marker = markers.get(peer.id);
         if (!marker) {
@@ -180,7 +193,50 @@ export default function WorldMap({
     return () => {
       cancelled = true;
     };
-  }, [peers, ready, interestFilters]);
+    // visibleKey captures the filter result; visibleIds is derived from it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [peers, ready, visibleKey]);
+
+  // Draw the distance-filter circle around you (removed when "Any").
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    const SOURCE = "radius-filter";
+    if (radiusKm === null || !me) {
+      if (map.getLayer(`${SOURCE}-fill`)) map.removeLayer(`${SOURCE}-fill`);
+      if (map.getLayer(`${SOURCE}-line`)) map.removeLayer(`${SOURCE}-line`);
+      if (map.getSource(SOURCE)) map.removeSource(SOURCE);
+      return;
+    }
+    const data: GeoJSON.Feature<GeoJSON.Polygon> = {
+      type: "Feature",
+      properties: {},
+      geometry: { type: "Polygon", coordinates: [circleRing(me, radiusKm)] },
+    };
+    const source = map.getSource(SOURCE);
+    if (source && source.type === "geojson") {
+      source.setData(data);
+    } else {
+      map.addSource(SOURCE, { type: "geojson", data });
+      map.addLayer({
+        id: `${SOURCE}-fill`,
+        type: "fill",
+        source: SOURCE,
+        paint: { "fill-color": "#34d399", "fill-opacity": 0.06 },
+      });
+      map.addLayer({
+        id: `${SOURCE}-line`,
+        type: "line",
+        source: SOURCE,
+        paint: {
+          "line-color": "#34d399",
+          "line-opacity": 0.6,
+          "line-width": 1.5,
+          "line-dasharray": [2, 2],
+        },
+      });
+    }
+  }, [radiusKm, me, ready]);
 
   // Open / move / close the profile popup for the selected dot.
   useEffect(() => {
@@ -332,17 +388,20 @@ export default function WorldMap({
       <div className="pointer-events-none absolute bottom-16 right-4 top-4 z-10 flex flex-col items-end gap-2 sm:flex-row-reverse sm:items-start">
         <div className="pointer-events-auto flex max-h-full min-h-0 flex-col">
           <PeopleList
-            peers={peers}
+            peers={visible}
             myTags={myTags}
             selectedId={selectedId}
             onSelect={focusPeer}
             filters={interestFilters}
             onToggleFilter={toggleInterest}
+            radiusLabel={radiusKm === null ? null : formatKm(radiusKm)}
+            onClearRadius={() => setRadiusKm(null)}
           />
         </div>
         <div className="pointer-events-auto flex max-h-full min-h-0 flex-col">
           <PopularInterests
-            peers={peers}
+            peers={inRange}
+            radiusLabel={radiusKm === null ? null : formatKm(radiusKm)}
             myTags={myTags}
             filters={interestFilters}
             onToggle={toggleInterest}
@@ -351,9 +410,12 @@ export default function WorldMap({
         </div>
       </div>
 
-      {/* Online count */}
-      <div className="absolute bottom-4 left-4 rounded-full bg-zinc-900/80 px-3 py-1.5 text-xs text-zinc-300 backdrop-blur">
-        {peers.length} online
+      {/* Bottom-left: online count + distance filter (expands upward). */}
+      <div className="absolute bottom-4 left-4 z-10 flex items-end gap-2">
+        <div className="rounded-full bg-zinc-900/80 px-3 py-1.5 text-xs text-zinc-300 backdrop-blur">
+          {peers.length} online
+        </div>
+        <RadiusFilter radiusKm={radiusKm} onChange={setRadiusKm} />
       </div>
     </div>
   );
