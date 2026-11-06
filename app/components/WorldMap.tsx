@@ -7,6 +7,7 @@ import type { Map as MapboxMap, Marker, Popup } from "mapbox-gl";
 import type { PeerDot } from "@/lib/types";
 import { displayName, sharedTags } from "@/lib/profile";
 import MapLegend from "./MapLegend";
+import PeopleList from "./PeopleList";
 import TagList from "./TagList";
 
 const TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN ?? "pk.eyJ1IjoicHVsc2UtbWFwIiwiYSI6ImNrMDBkZW1vMDAwMDAwMDAifQ.AAAAAAAAAAAAAAAAAAAAAA";
@@ -206,6 +207,17 @@ export default function WorldMap({
     };
   }, [selectedId, ready, popupNode]);
 
+  // Picked from the people list: fly to their dot, and open the card unless
+  // they're busy (busy dots don't open a card when tapped either).
+  function focusPeer(peer: PeerDot) {
+    mapRef.current?.flyTo({
+      center: [peer.lng, peer.lat],
+      zoom: Math.max(mapRef.current.getZoom(), 6),
+      essential: true,
+    });
+    if (!peer.busy) setSelectedId(peer.id);
+  }
+
   const selected = peers.find((p) => p.id === selectedId) ?? null;
   const shared = selected ? sharedTags(selected.tags, myTags).size : 0;
 
@@ -295,6 +307,13 @@ export default function WorldMap({
         available={peers.filter((p) => !p.busy).length}
         busy={peers.filter((p) => p.busy).length}
         canConnect={canConnect}
+      />
+
+      <PeopleList
+        peers={peers}
+        myTags={myTags}
+        selectedId={selectedId}
+        onSelect={focusPeer}
       />
 
       {/* Online count */}

@@ -86,7 +86,7 @@ export default function MapLegend({
         How it works
       </h3>
       <ol className="list-decimal space-y-1 pl-4 text-xs text-zinc-300 marker:text-zinc-500">
-        <li>Tap a dot to see their name and interests, then say hi.</li>
+        <li>Tap a dot (or pick someone from People) to see their name and interests, then say hi.</li>
         <li>If they accept, a private text chat opens.</li>
         <li>From the chat, either of you can ask to start video.</li>
       </ol>
