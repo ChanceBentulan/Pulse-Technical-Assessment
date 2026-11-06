@@ -12,12 +12,15 @@ const TOP_N = 10;
 // how many rows the filter will show.
 export default function PopularInterests({
   peers,
+  radiusLabel,
   myTags,
   filters,
   onToggle,
   onClear,
 }: {
+  // Already narrowed to the distance filter, if any.
   peers: PeerDot[];
+  radiusLabel: string | null;
   myTags: string[];
   filters: string[];
   onToggle: (tag: string) => void;
@@ -78,7 +81,8 @@ export default function PopularInterests({
         </button>
       </div>
       <p className="px-4 pb-2 text-[11px] text-zinc-500">
-        Among {total} other {total === 1 ? "person" : "people"} online
+        Among {total} other {total === 1 ? "person" : "people"}{" "}
+        {radiusLabel ? `within ${radiusLabel}` : "online"}
         {withTags < total && ` · ${withTags} listed interests`}
       </p>
       <p className="px-4 pb-2 text-[11px] text-zinc-400">
@@ -100,7 +104,9 @@ export default function PopularInterests({
       {ranked.length === 0 ? (
         <p className="px-4 pb-4 text-xs italic text-zinc-500">
           {total === 0
-            ? "No one else is online yet."
+            ? radiusLabel
+              ? `No one else within ${radiusLabel}.`
+              : "No one else is online yet."
             : "No interests listed yet."}
         </p>
       ) : (
