@@ -14,7 +14,8 @@ import {
 export default function EntryGate({
   onReady,
 }: {
-  onReady: (lat: number, lng: number, profile: Profile) => void;
+  // Resolves false if joining failed, so the gate can say so.
+  onReady: (lat: number, lng: number, profile: Profile) => Promise<boolean>;
 }) {
   const [status, setStatus] = useState<"idle" | "locating" | "error">("idle");
   const [error, setError] = useState<string>("");
@@ -55,7 +56,13 @@ export default function EntryGate({
     const profile: Profile = { name: sanitizeName(name), tags: finalTags };
     setStatus("locating");
     navigator.geolocation.getCurrentPosition(
-      (pos) => onReady(pos.coords.latitude, pos.coords.longitude, profile),
+      async (pos) => {
+        const ok = await onReady(pos.coords.latitude, pos.coords.longitude, profile);
+        if (!ok) {
+          setStatus("error");
+          setError("Couldn't connect to Pulse. Please try again.");
+        }
+      },
       (err) => {
         setStatus("error");
         setError(

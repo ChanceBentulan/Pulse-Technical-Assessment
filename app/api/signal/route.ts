@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import type { SignalType } from "@/lib/types";
+import { idFromRequest, unauthorized } from "@/lib/session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,10 +18,15 @@ const VALID_TYPES: SignalType[] = [
 
 const MAX_PAYLOAD = 64 * 1024; // SDP/ICE are small; cap to be safe.
 
-// POST /api/signal — body { fromId, toId, type, payload? }
+// POST /api/signal — body { toId, type, payload? }
+// Auth: `Authorization: Bearer <token>`. The sender (`fromId`) is derived from
+// the token, never taken from the body, so nobody can send as someone else.
 // Drops one message into the recipient's mailbox. Also manages the `busy`
 // flag so a user can only be in one connection at a time.
 export async function POST(request: NextRequest) {
+  const fromId = idFromRequest(request);
+  if (!fromId) return unauthorized();
+
   let body: unknown;
   try {
     body = await request.json();
@@ -28,13 +34,10 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: "invalid body" }, { status: 400 });
   }
 
-  const { fromId, toId, type, payload } = (body ?? {}) as Record<
-    string,
-    unknown
-  >;
+  const { toId, type, payload } = (body ?? {}) as Record<string, unknown>;
 
-  if (typeof fromId !== "string" || typeof toId !== "string") {
-    return Response.json({ error: "invalid ids" }, { status: 400 });
+  if (typeof toId !== "string" || toId.length > 64 || toId === fromId) {
+    return Response.json({ error: "invalid toId" }, { status: 400 });
   }
   if (typeof type !== "string" || !VALID_TYPES.includes(type as SignalType)) {
     return Response.json({ error: "invalid type" }, { status: 400 });
@@ -53,6 +56,15 @@ export async function POST(request: NextRequest) {
   // Enforce "one active connection at a time": if the target is already busy,
   // auto-decline the request instead of delivering it.
   if (signalType === "request") {
+    // The sender must be on the map themselves — no requests from invisible
+    // ids that the recipient can't see or identify.
+    const sender = await prisma.presence.findUnique({
+      where: { id: fromId },
+      select: { id: true },
+    });
+    if (!sender) {
+      return Response.json({ error: "not joined" }, { status: 403 });
+    }
     const target = await prisma.presence.findUnique({
       where: { id: toId },
       select: { busy: true },

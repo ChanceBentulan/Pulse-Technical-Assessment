@@ -78,10 +78,21 @@ Issues found, ranked, and what I fixed.
   - poll as them and steal their incoming requests and call-setup messages;
   - send signals as them (e.g. `end` to kill their call, `accept` to fake a connection);
   - call `/api/leave` to remove them from the map.
-- *Fix:* `/api/join` now issues a random secret **token** that only the user's
-  browser holds (the server stores only its hash). `poll`, `signal` and `leave`
-  must include it and are rejected if it doesn't match the `id`. The `id` stays
-  public for the map; the token proves it's really you.
+- *Fix:* `/api/join` now issues a random 256-bit secret **token** that only the
+  user's browser holds, and the public `id` is `SHA-256(token)`. `poll`,
+  `signal` and `leave` take only the token (an `Authorization` header, or the
+  body for `sendBeacon`) and the server *derives* the caller's id from it —
+  any `id`/`fromId` sent by the client is ignored. The `id` stays public for the
+  map; turning it back into the token is infeasible, so it can't be used to act
+  as someone. (`lib/session.ts`)
+  - Nothing secret is stored, so no schema change was needed, and a reaped
+    row can only be re-created by its own token holder.
+  - Clients can no longer pick their own id at join, so they can't claim or
+    overwrite someone else's row.
+  - A `request` must come from someone actually on the map, so tokens minted
+    offline can't send requests from invisible senders.
+  - *Verified:* polling/leaving with only a victim's `id` → 401; a signal with
+    a forged `fromId` is delivered as coming from the real sender.
 
 ---
 

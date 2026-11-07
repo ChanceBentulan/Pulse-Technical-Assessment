@@ -9,7 +9,7 @@ import ChatPanel, { type ChatMessage } from "./components/ChatPanel";
 import SafetyCode from "./components/SafetyCode";
 import VideoPanel from "./components/VideoPanel";
 import PartnerClock from "./components/PartnerClock";
-import { join, leave, poll, sendSignal, type LatLng } from "@/lib/api";
+import { join, leave, poll, sendSignal, type LatLng, type Session } from "@/lib/api";
 import { PeerSession, type DescType, type PeerControl } from "@/lib/webrtc";
 import { POLL_INTERVAL_MS } from "@/lib/presence";
 import { type LiveLink, type PeerDot, type SignalMsg } from "@/lib/types";
@@ -29,7 +29,8 @@ const REQUEST_TIMEOUT_MS = 30_000;
 
 export default function Home() {
   const [phase, setPhase] = useState<"gate" | "live">("gate");
-  const [sessionId] = useState(() => crypto.randomUUID());
+  // Public id + secret token, issued by /api/join (null until joined).
+  const [session, setSession] = useState<Session | null>(null);
   const [peers, setPeers] = useState<PeerDot[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
@@ -123,7 +124,7 @@ export default function Home() {
   function startPeer(peerId: string, initiator: boolean) {
     const ps = new PeerSession(initiator, {
       onSignal: (type: DescType, payload: string) => {
-        void sendSignal(sessionId, peerId, type, payload);
+        void sendSignal(session, peerId, type, payload);
       },
       onChat: (text) => addMessage(false, text),
       onControl: (ctrl) => handleControl(ctrl),
@@ -135,7 +136,7 @@ export default function Home() {
         if (state === "failed") {
           // Tell the server so both busy flags are cleared — otherwise the
           // survivor of a dropped call stays "busy" and unreachable forever.
-          void sendSignal(sessionId, peerId, "end");
+          void sendSignal(session, peerId, "end");
           teardown("Connection failed (network).");
         }
       },
@@ -237,7 +238,7 @@ export default function Home() {
         // The partner saw a different code: treat the link as compromised.
         const c = connRef.current;
         if (c.kind === "connecting" || c.kind === "connected") {
-          void sendSignal(sessionId, c.peerId, "end");
+          void sendSignal(session, c.peerId, "end");
         }
         teardown(
           `${displayName(partner?.name)} reported the safety codes didn't match — connection ended.`,
@@ -251,13 +252,13 @@ export default function Home() {
     if (connRef.current.kind !== "idle") return;
     setPartner(profileOf(peerId));
     setConn({ kind: "requesting", peerId });
-    void sendSignal(sessionId, peerId, "request");
+    void sendSignal(session, peerId, "request");
     requestTimer.current = setTimeout(() => {
       if (
         connRef.current.kind === "requesting" &&
         connRef.current.peerId === peerId
       ) {
-        void sendSignal(sessionId, peerId, "end");
+        void sendSignal(session, peerId, "end");
         teardown("No answer.");
       }
     }, REQUEST_TIMEOUT_MS);
@@ -265,7 +266,7 @@ export default function Home() {
 
   function cancelRequest() {
     if (connRef.current.kind === "requesting") {
-      void sendSignal(sessionId, connRef.current.peerId, "end");
+      void sendSignal(session, connRef.current.peerId, "end");
     }
     teardown();
   }
@@ -274,20 +275,20 @@ export default function Home() {
     if (connRef.current.kind !== "incoming") return;
     const peerId = connRef.current.peerId;
     startPeer(peerId, false);
-    void sendSignal(sessionId, peerId, "accept");
+    void sendSignal(session, peerId, "accept");
     setConn({ kind: "connecting", peerId });
   }
 
   function declineIncoming() {
     if (connRef.current.kind !== "incoming") return;
-    void sendSignal(sessionId, connRef.current.peerId, "decline");
+    void sendSignal(session, connRef.current.peerId, "decline");
     setConn({ kind: "idle" });
   }
 
   function endConnection() {
     const c = connRef.current;
     if (c.kind === "connecting" || c.kind === "connected") {
-      void sendSignal(sessionId, c.peerId, "end");
+      void sendSignal(session, c.peerId, "end");
     }
     teardown();
   }
@@ -304,7 +305,7 @@ export default function Home() {
     peerRef.current?.sendControl("code-mismatch");
     const c = connRef.current;
     if (c.kind === "connecting" || c.kind === "connected") {
-      void sendSignal(sessionId, c.peerId, "end");
+      void sendSignal(session, c.peerId, "end");
     }
     teardown("Safety codes didn't match — connection ended to keep you safe.");
   }
@@ -374,7 +375,7 @@ export default function Home() {
           setPartner(profileOf(sig.fromId));
           setConn({ kind: "incoming", peerId: sig.fromId });
         } else {
-          void sendSignal(sessionId, sig.fromId, "decline");
+          void sendSignal(session, sig.fromId, "decline");
         }
         break;
       }
@@ -431,13 +432,13 @@ export default function Home() {
   });
 
   useEffect(() => {
-    if (phase !== "live" || !sessionId) return;
+    if (phase !== "live" || !session) return;
     let active = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
 
     const tick = async () => {
       try {
-        const data = await poll(sessionId, offsetLocRef.current, profileRef.current);
+        const data = await poll(session, offsetLocRef.current, profileRef.current);
         if (!active) return;
         setPeers(data.peers);
         setLinks(data.links ?? []);
@@ -458,27 +459,34 @@ export default function Home() {
       active = false;
       if (timer) clearTimeout(timer);
     };
-  }, [phase, sessionId]);
+  }, [phase, session]);
 
   useEffect(() => {
-    if (!sessionId || phase !== "live") return;
-    const onLeave = () => leave(sessionId);
+    if (!session || phase !== "live") return;
+    const onLeave = () => leave(session);
     window.addEventListener("pagehide", onLeave);
     window.addEventListener("beforeunload", onLeave);
     return () => {
       window.removeEventListener("pagehide", onLeave);
       window.removeEventListener("beforeunload", onLeave);
     };
-  }, [sessionId, phase]);
+  }, [session, phase]);
 
-  async function handleReady(lat: number, lng: number, profile: Profile) {
+  async function handleReady(
+    lat: number,
+    lng: number,
+    profile: Profile,
+  ): Promise<boolean> {
+    const joined = await join(lat, lng, profile).catch(() => null);
+    // Without a session nothing else works — stay on the gate.
+    if (!joined) return false;
     setMyLocation({ lat, lng });
-    const joined = await join(sessionId, lat, lng, profile);
-    offsetLocRef.current = joined?.loc ?? null;
-    const mine = joined?.profile ?? profile;
-    profileRef.current = mine;
-    setMyProfile(mine);
+    setSession(joined.session);
+    offsetLocRef.current = joined.loc;
+    profileRef.current = joined.profile;
+    setMyProfile(joined.profile);
     setPhase("live");
+    return true;
   }
 
   if (phase === "gate") {
