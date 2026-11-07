@@ -4,20 +4,19 @@ import { STALE_MS, SIGNAL_TTL_MS } from "@/lib/presence";
 import { isValidLatLng } from "@/lib/geo";
 import { sanitizeName, sanitizeTags } from "@/lib/profile";
 import type { LiveLink, PollResponse } from "@/lib/types";
+import { idFromRequest, unauthorized } from "@/lib/session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// GET /api/poll?id= — the single endpoint that drives the live map.
+// GET /api/poll — the single endpoint that drives the live map.
+// Auth: `Authorization: Bearer <token>`; the caller's id is derived from it.
 // It (1) heartbeats the caller, (2) reaps stale presence + orphan signals,
 // (3) returns the filtered online peers, and (4) drains this user's mailbox.
 export async function GET(request: NextRequest) {
   const params = request.nextUrl.searchParams;
-  const id = params.get("id");
-
-  if (!id) {
-    return Response.json({ error: "missing id" }, { status: 400 });
-  }
+  const id = idFromRequest(request);
+  if (!id) return unauthorized();
 
   const now = Date.now();
   const staleCutoff = new Date(now - STALE_MS);
@@ -27,7 +26,9 @@ export async function GET(request: NextRequest) {
   // If the caller's row is gone (reaped after a throttled background tab, or
   // removed by a pagehide leave before a back/forward-cache restore), recreate
   // it from the already-offset coords (and profile) the client got back from
-  // /api/join. Profile params are only used on that recreate path.
+  // /api/join. Profile params are only used on that recreate path. Because
+  // the id is derived from the caller's token, only the token holder can
+  // recreate their own row — a reaped row can't be hijacked by anyone else.
   const lat = Number(params.get("lat"));
   const lng = Number(params.get("lng"));
   const lastSeen = new Date(now);
