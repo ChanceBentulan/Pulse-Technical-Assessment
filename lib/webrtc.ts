@@ -1,3 +1,5 @@
+import { computeSafetyCode, extractFingerprint, type SafetySymbol } from "./safetyCode";
+
 export type DescType = "offer" | "answer" | "ice";
 export type PeerControl =
   | "video-request"
@@ -9,7 +11,10 @@ export type PeerControl =
   | "cam-on"
   | "cam-off"
   | "mic-on"
-  | "mic-off";
+  | "mic-off"
+  // Safety code outcome, so the partner sees what we concluded.
+  | "code-verified"
+  | "code-mismatch";
 
 // Why our camera isn't in the call, if it isn't.
 export type CameraIssue = "not-found" | "blocked" | "busy" | null;
@@ -157,6 +162,17 @@ export class PeerSession {
     if (this.dc && this.dc.readyState === "open") {
       this.dc.send(JSON.stringify(obj));
     }
+  }
+
+  // Emoji safety code derived from both DTLS fingerprints (see
+  // lib/safetyCode.ts). Ready once both descriptions are set — i.e. by the
+  // time the data channel opens. The certificate is fixed for the life of
+  // the RTCPeerConnection, so video renegotiation never changes the code.
+  async getSafetyCode(): Promise<SafetySymbol[] | null> {
+    const local = extractFingerprint(this.pc.localDescription?.sdp);
+    const remote = extractFingerprint(this.pc.remoteDescription?.sdp);
+    if (!local || !remote || !crypto?.subtle) return null;
+    return computeSafetyCode(local, remote);
   }
 
   // The partner's incoming media, or null if nothing has arrived yet.

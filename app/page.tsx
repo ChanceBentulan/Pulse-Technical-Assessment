@@ -6,12 +6,14 @@ import WorldMap from "./components/WorldMap";
 import ConnectionPrompt from "./components/ConnectionPrompt";
 import TagList from "./components/TagList";
 import ChatPanel, { type ChatMessage } from "./components/ChatPanel";
+import SafetyCode from "./components/SafetyCode";
 import VideoPanel from "./components/VideoPanel";
 import { join, leave, poll, sendSignal, type LatLng } from "@/lib/api";
 import { PeerSession, type DescType, type PeerControl } from "@/lib/webrtc";
 import { POLL_INTERVAL_MS } from "@/lib/presence";
 import { type PeerDot, type SignalMsg } from "@/lib/types";
 import { displayName, type Profile } from "@/lib/profile";
+import { type SafetySymbol } from "@/lib/safetyCode";
 
 type Conn =
   | { kind: "idle" }
@@ -44,6 +46,10 @@ export default function Home() {
   // Own profile (as sanitised by the server) and the current partner's.
   const [myProfile, setMyProfile] = useState<Profile>({ name: null, tags: [] });
   const [partner, setPartner] = useState<Profile | null>(null);
+  // Safety code for the current connection, and who has confirmed it matches.
+  const [safetyCode, setSafetyCode] = useState<SafetySymbol[] | null>(null);
+  const [iVerified, setIVerified] = useState(false);
+  const [peerVerified, setPeerVerified] = useState(false);
 
   const [conn, _setConn] = useState<Conn>({ kind: "idle" });
   const connRef = useRef<Conn>(conn);
@@ -98,6 +104,9 @@ export default function Home() {
     setVideo("none");
     setMessages([]);
     setPartner(null);
+    setSafetyCode(null);
+    setIVerified(false);
+    setPeerVerified(false);
     setConn({ kind: "idle" });
     if (message) showNotice(message);
   }
@@ -120,6 +129,10 @@ export default function Home() {
       },
       onChannelOpen: () => {
         setConn({ kind: "connected", peerId });
+        void ps.getSafetyCode().then((code) => {
+          // Ignore if this connection was torn down while hashing.
+          if (peerRef.current === ps) setSafetyCode(code);
+        });
       },
     });
     peerRef.current = ps;
@@ -198,6 +211,20 @@ export default function Home() {
       case "mic-off":
         setRemoteMicOff(true);
         break;
+      case "code-verified":
+        setPeerVerified(true);
+        break;
+      case "code-mismatch": {
+        // The partner saw a different code: treat the link as compromised.
+        const c = connRef.current;
+        if (c.kind === "connecting" || c.kind === "connected") {
+          void sendSignal(sessionId, c.peerId, "end");
+        }
+        teardown(
+          `${displayName(partner?.name)} reported the safety codes didn't match — connection ended.`,
+        );
+        break;
+      }
     }
   }
 
@@ -244,6 +271,23 @@ export default function Home() {
       void sendSignal(sessionId, c.peerId, "end");
     }
     teardown();
+  }
+
+  function confirmSafetyCode() {
+    if (!peerRef.current || iVerified) return;
+    peerRef.current.sendControl("code-verified");
+    setIVerified(true);
+  }
+
+  // Codes differ → someone may be relaying the connection. Warn the partner
+  // over the data channel, then hang up.
+  function rejectSafetyCode() {
+    peerRef.current?.sendControl("code-mismatch");
+    const c = connRef.current;
+    if (c.kind === "connecting" || c.kind === "connected") {
+      void sendSignal(sessionId, c.peerId, "end");
+    }
+    teardown("Safety codes didn't match — connection ended to keep you safe.");
   }
 
   function startVideoRequest() {
@@ -475,6 +519,11 @@ export default function Home() {
           messages={messages}
           connected={conn.kind === "connected"}
           videoBusy={video !== "none"}
+          safetyCode={safetyCode}
+          iVerified={iVerified}
+          peerVerified={peerVerified}
+          onConfirmCode={confirmSafetyCode}
+          onRejectCode={rejectSafetyCode}
           onSend={sendChat}
           onStartVideo={startVideoRequest}
           onEnd={endConnection}
@@ -511,6 +560,18 @@ export default function Home() {
           messages={messages}
           chatConnected={conn.kind === "connected"}
           onSendChat={sendChat}
+          safetyCode={
+            conn.kind === "connected" && (
+              <SafetyCode
+                code={safetyCode}
+                peerName={displayName(partner?.name)}
+                iVerified={iVerified}
+                peerVerified={peerVerified}
+                onConfirm={confirmSafetyCode}
+                onReject={rejectSafetyCode}
+              />
+            )
+          }
           peerName={displayName(partner?.name)}
           onEnd={endVideo}
         />

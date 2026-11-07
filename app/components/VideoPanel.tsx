@@ -16,6 +16,7 @@ export default function VideoPanel({
   messages,
   chatConnected,
   onSendChat,
+  safetyCode,
   onEnd,
 }: {
   localStream: MediaStream | null;
@@ -32,6 +33,8 @@ export default function VideoPanel({
   messages: ChatMessage[];
   chatConnected: boolean;
   onSendChat: (text: string) => void;
+  // The connection's safety code badge/card, shown atop the in-call chat.
+  safetyCode?: React.ReactNode;
   onEnd: () => void;
 }) {
   const [chatOpen, setChatOpen] = useState(false);
@@ -132,6 +135,9 @@ export default function VideoPanel({
                 <CloseIcon className="h-4 w-4" />
               </button>
             </header>
+            {safetyCode && (
+              <div className="border-b border-zinc-800 px-4 pb-2.5">{safetyCode}</div>
+            )}
             <ChatThread
               messages={messages}
               connected={chatConnected}
