@@ -7,10 +7,13 @@ import { useState } from "react";
 export default function MapLegend({
   available,
   busy,
+  live,
   canConnect,
 }: {
   available: number;
   busy: number;
+  // Conversations happening right now (arcs on the map).
+  live: number;
   canConnect: boolean;
 }) {
   // Open by default on wider screens; on phones start collapsed so the map
@@ -76,6 +79,33 @@ export default function MapLegend({
             <span className="font-medium text-zinc-100">Busy</span>
             <span className="text-zinc-400"> — already in a chat</span>
             <span className="ml-1 tabular-nums text-zinc-500">({busy})</span>
+          </span>
+        </li>
+        <li className="flex items-center gap-3">
+          <span className="flex w-5 justify-center">
+            <svg viewBox="0 0 20 12" className="h-3 w-5" aria-hidden>
+              <path
+                d="M2 10 Q10 -2 18 10"
+                fill="none"
+                stroke="#6ee7b7"
+                strokeWidth="2"
+                strokeLinecap="round"
+              />
+            </svg>
+          </span>
+          <span>
+            <span className="font-medium text-zinc-100">Live arc</span>
+            <span className="text-zinc-400"> — two people talking now</span>
+            <span className="ml-1 tabular-nums text-zinc-500">({live})</span>
+          </span>
+        </li>
+        <li className="flex items-center gap-3">
+          <span className="flex w-5 justify-center">
+            <span className="h-3 w-5 rounded-sm bg-gradient-to-r from-transparent via-amber-400/40 to-[#03071e]" />
+          </span>
+          <span>
+            <span className="font-medium text-zinc-100">Night side</span>
+            <span className="text-zinc-400"> — shading follows the real sun</span>
           </span>
         </li>
       </ul>

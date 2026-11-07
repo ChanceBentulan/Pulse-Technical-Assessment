@@ -74,15 +74,35 @@ export async function POST(request: NextRequest) {
   // `decline` deliberately leaves busy alone: it only happens before an
   // accept, and a user already in a chat auto-declines new requests — clearing
   // busy there would wrongly mark them available mid-conversation.
+  // partnerId mirrors this so the map can draw the pair as a live arc.
   if (signalType === "accept") {
     await prisma.presence.updateMany({
       where: { id: { in: [fromId, toId] } },
       data: { busy: true },
     });
+    await prisma.presence.updateMany({
+      where: { id: fromId },
+      data: { partnerId: toId },
+    });
+    await prisma.presence.updateMany({
+      where: { id: toId },
+      data: { partnerId: fromId },
+    });
   } else if (signalType === "end") {
     await prisma.presence.updateMany({
       where: { id: { in: [fromId, toId] } },
       data: { busy: false },
+    });
+    // Only unlink this exact pair — an "end" for a cancelled request must
+    // not erase the target's link to someone else.
+    await prisma.presence.updateMany({
+      where: {
+        OR: [
+          { id: fromId, partnerId: toId },
+          { id: toId, partnerId: fromId },
+        ],
+      },
+      data: { partnerId: null },
     });
   }
 

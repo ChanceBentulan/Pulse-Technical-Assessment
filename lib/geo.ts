@@ -90,3 +90,63 @@ export function circleRing(
   }
   return ring;
 }
+
+// A curved path between two points for the live-connection arcs: the great
+// circle (the real shortest route), bowed sideways so even nearby pairs read
+// as an arc rather than a straight line. Longitudes are kept continuous, so
+// arcs across the Pacific take the short way over the antimeridian.
+export function arcPath(
+  a: { lat: number; lng: number },
+  b: { lat: number; lng: number },
+  steps = 64,
+): [number, number][] {
+  const toVec = (p: { lat: number; lng: number }) => {
+    const la = toRad(p.lat);
+    const lo = toRad(p.lng);
+    return [Math.cos(la) * Math.cos(lo), Math.cos(la) * Math.sin(lo), Math.sin(la)];
+  };
+  const va = toVec(a);
+  const vb = toVec(b);
+  const dot = Math.min(1, Math.max(-1, va[0] * vb[0] + va[1] * vb[1] + va[2] * vb[2]));
+  const omega = Math.acos(dot);
+  const sinO = Math.sin(omega);
+
+  // Great-circle points (spherical interpolation).
+  const pts: [number, number][] = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const [wa, wb] =
+      sinO < 1e-9 ? [1 - t, t] : [Math.sin((1 - t) * omega) / sinO, Math.sin(t * omega) / sinO];
+    const x = wa * va[0] + wb * vb[0];
+    const y = wa * va[1] + wb * vb[1];
+    const z = wa * va[2] + wb * vb[2];
+    let lng = toDeg(Math.atan2(y, x));
+    const lat = toDeg(Math.atan2(z, Math.hypot(x, y)));
+    if (pts.length) {
+      const prev = pts[pts.length - 1][0];
+      while (lng - prev > 180) lng -= 360;
+      while (lng - prev < -180) lng += 360;
+    }
+    pts.push([lng, lat]);
+  }
+
+  // Bow the path: push each point perpendicular to the chord, most in the
+  // middle, always toward the north-ish side so arcs look like flight paths.
+  const [x0, y0] = pts[0];
+  const [x1, y1] = pts[pts.length - 1];
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+  const len = Math.hypot(dx, dy);
+  if (len === 0) return pts;
+  let nx = -dy / len;
+  let ny = dx / len;
+  if (ny < 0) {
+    nx = -nx;
+    ny = -ny;
+  }
+  const bow = 0.18 * len;
+  return pts.map(([x, y], i) => {
+    const s = Math.sin((Math.PI * i) / steps) * bow;
+    return [x + nx * s, Math.max(-85, Math.min(85, y + ny * s))];
+  });
+}

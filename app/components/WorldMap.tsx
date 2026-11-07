@@ -3,26 +3,46 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import "mapbox-gl/dist/mapbox-gl.css";
-import type { Map as MapboxMap, Marker, Popup } from "mapbox-gl";
-import type { PeerDot } from "@/lib/types";
+import type { ExpressionSpecification, Map as MapboxMap, Marker, Popup } from "mapbox-gl";
+import type { LiveLink, PeerDot } from "@/lib/types";
 import { displayName, sharedTags } from "@/lib/profile";
 import MapLegend from "./MapLegend";
 import PeopleList from "./PeopleList";
 import PopularInterests from "./PopularInterests";
 import RadiusFilter, { formatKm } from "./RadiusFilter";
-import { circleRing, distanceKm } from "@/lib/geo";
+import { arcPath, circleRing, distanceKm } from "@/lib/geo";
+import { MERCATOR_MAX_LAT, SKY_EMOJI, SKY_LABEL, paintNight, skyPhase } from "@/lib/sun";
 import TagList from "./TagList";
 
 const TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN ?? "pk.eyJ1IjoicHVsc2UtbWFwIiwiYSI6ImNrMDBkZW1vMDAwMDAwMDAifQ.AAAAAAAAAAAAAAAAAAAAAA";
 
+// Live-connection arc colours: a dim emerald trail with a bright pulse
+// travelling along it.
+const ARC_BASE = "rgba(52, 211, 153, 0.35)";
+const ARC_HEAD = "rgba(209, 250, 229, 1)";
+const ARC_STATIC = [
+  "interpolate",
+  ["linear"],
+  ["line-progress"],
+  0,
+  "rgba(52, 211, 153, 0.5)",
+  0.5,
+  "rgba(110, 231, 183, 0.95)",
+  1,
+  "rgba(52, 211, 153, 0.5)",
+];
+
 export default function WorldMap({
   peers,
+  links,
   me,
   myTags,
   onPeerClick,
   canConnect,
 }: {
   peers: PeerDot[];
+  // Pairs currently talking, drawn as arcs between their dots.
+  links: LiveLink[];
   me: { lat: number; lng: number } | null;
   myTags: string[];
   onPeerClick: (id: string) => void;
@@ -238,6 +258,133 @@ export default function WorldMap({
     }
   }, [radiusKm, me, ready]);
 
+  // Day/night: shade the night side of the planet, repainted every minute so
+  // the terminator creeps across the map in real time. Drawn under the map's
+  // labels so place names stay readable.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    const SOURCE = "day-night";
+    const canvas = document.createElement("canvas");
+    canvas.width = 512;
+    canvas.height = 512;
+    const corners: [[number, number], [number, number], [number, number], [number, number]] = [
+      [-180, MERCATOR_MAX_LAT],
+      [180, MERCATOR_MAX_LAT],
+      [180, -MERCATOR_MAX_LAT],
+      [-180, -MERCATOR_MAX_LAT],
+    ];
+
+    paintNight(canvas, new Date());
+    if (!map.getSource(SOURCE)) {
+      map.addSource(SOURCE, {
+        type: "image",
+        url: canvas.toDataURL(),
+        coordinates: corners,
+      });
+      const firstLabel = map.getStyle()?.layers?.find((l) => l.type === "symbol")?.id;
+      map.addLayer(
+        {
+          id: SOURCE,
+          type: "raster",
+          source: SOURCE,
+          paint: { "raster-fade-duration": 0, "raster-opacity": 1 },
+        },
+        firstLabel,
+      );
+    }
+
+    const timer = setInterval(() => {
+      paintNight(canvas, new Date());
+      const source = map.getSource(SOURCE);
+      if (source?.type === "image") {
+        source.updateImage({ url: canvas.toDataURL(), coordinates: corners });
+      }
+    }, 60_000);
+    return () => clearInterval(timer);
+  }, [ready]);
+
+  // Live connection arcs between every pair currently talking.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    const SOURCE = "live-arcs";
+    const data: GeoJSON.FeatureCollection<GeoJSON.LineString> = {
+      type: "FeatureCollection",
+      features: links.map((l) => ({
+        type: "Feature",
+        properties: {},
+        geometry: { type: "LineString", coordinates: arcPath(l.from, l.to) },
+      })),
+    };
+    const source = map.getSource(SOURCE);
+    if (source && source.type === "geojson") {
+      source.setData(data);
+      return;
+    }
+    // lineMetrics enables line-progress, which the travelling pulse needs.
+    map.addSource(SOURCE, { type: "geojson", data, lineMetrics: true });
+    map.addLayer({
+      id: `${SOURCE}-glow`,
+      type: "line",
+      source: SOURCE,
+      layout: { "line-cap": "round" },
+      paint: {
+        "line-color": "#34d399",
+        "line-width": 7,
+        "line-blur": 6,
+        "line-opacity": 0.3,
+      },
+    });
+    map.addLayer({
+      id: SOURCE,
+      type: "line",
+      source: SOURCE,
+      layout: { "line-cap": "round" },
+      paint: {
+        "line-width": 2,
+        "line-gradient": ARC_STATIC as ExpressionSpecification,
+      },
+    });
+  }, [links, ready]);
+
+  // Animate a pulse along the arcs while any exist (static if the user prefers
+  // reduced motion). Keyed on "any arcs?" so each poll doesn't restart it.
+  const hasLinks = links.length > 0;
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready || !hasLinks) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const LAYER = "live-arcs";
+    const PERIOD_MS = 2600;
+    let frame = 0;
+    let last = 0;
+
+    const tick = (now: number) => {
+      frame = requestAnimationFrame(tick);
+      if (now - last < 33 || !map.getLayer(LAYER)) return; // ~30 fps is plenty
+      last = now;
+      // Head runs 0 → 1.25 so the pulse fully leaves before the next one.
+      const head = ((now % PERIOD_MS) / PERIOD_MS) * 1.25;
+      map.setPaintProperty(
+        LAYER,
+        "line-gradient",
+        pulseGradient(head) as ExpressionSpecification,
+      );
+    };
+    frame = requestAnimationFrame(tick);
+    return () => {
+      cancelAnimationFrame(frame);
+      if (map.getLayer(LAYER)) {
+        map.setPaintProperty(
+          LAYER,
+          "line-gradient",
+          ARC_STATIC as ExpressionSpecification,
+        );
+      }
+    };
+  }, [ready, hasLinks]);
+
   // Open / move / close the profile popup for the selected dot.
   useEffect(() => {
     const map = mapRef.current;
@@ -292,6 +439,7 @@ export default function WorldMap({
 
   const selected = peers.find((p) => p.id === selectedId) ?? null;
   const shared = selected ? sharedTags(selected.tags, myTags).size : 0;
+  const selectedSky = selected ? skyPhase(selected.lat, selected.lng, new Date()) : null;
 
   return (
     <div className="absolute inset-0">
@@ -326,6 +474,11 @@ export default function WorldMap({
                   <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
                   Available to chat
                 </p>
+                {selectedSky && (
+                  <p className="mt-0.5 text-xs text-zinc-400">
+                    {SKY_EMOJI[selectedSky]} {SKY_LABEL[selectedSky]}
+                  </p>
+                )}
               </div>
               <button
                 onClick={() => popupRef.current?.remove()}
@@ -378,6 +531,7 @@ export default function WorldMap({
       <MapLegend
         available={peers.filter((p) => !p.busy).length}
         busy={peers.filter((p) => p.busy).length}
+        live={links.length}
         canConnect={canConnect}
       />
 
@@ -419,4 +573,26 @@ export default function WorldMap({
       </div>
     </div>
   );
+}
+
+// Line gradient for one frame of the travelling pulse: dim trail, a bright
+// head at `head` (0–1 along the arc) with a short fading tail behind it.
+// Stops must be strictly increasing within [0, 1], so clamp and drop repeats.
+function pulseGradient(head: number): unknown[] {
+  const stops: [number, string][] = [
+    [0, ARC_BASE],
+    [head - 0.22, ARC_BASE],
+    [head, ARC_HEAD],
+    [head + 0.03, ARC_BASE],
+    [1, ARC_BASE],
+  ];
+  const expr: unknown[] = ["interpolate", ["linear"], ["line-progress"]];
+  let prev = -1;
+  for (const [at, color] of stops) {
+    const t = Math.min(1, Math.max(0, at));
+    if (t <= prev) continue;
+    expr.push(t, color);
+    prev = t;
+  }
+  return expr;
 }

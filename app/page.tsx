@@ -8,10 +8,11 @@ import TagList from "./components/TagList";
 import ChatPanel, { type ChatMessage } from "./components/ChatPanel";
 import SafetyCode from "./components/SafetyCode";
 import VideoPanel from "./components/VideoPanel";
+import PartnerClock from "./components/PartnerClock";
 import { join, leave, poll, sendSignal, type LatLng } from "@/lib/api";
 import { PeerSession, type DescType, type PeerControl } from "@/lib/webrtc";
 import { POLL_INTERVAL_MS } from "@/lib/presence";
-import { type PeerDot, type SignalMsg } from "@/lib/types";
+import { type LiveLink, type PeerDot, type SignalMsg } from "@/lib/types";
 import { displayName, type Profile } from "@/lib/profile";
 import { type SafetySymbol } from "@/lib/safetyCode";
 
@@ -52,6 +53,10 @@ export default function Home() {
   const [safetyCode, setSafetyCode] = useState<SafetySymbol[] | null>(null);
   const [iVerified, setIVerified] = useState(false);
   const [peerVerified, setPeerVerified] = useState(false);
+  // Partner's time zone, sent by their browser over the data channel.
+  const [partnerTz, setPartnerTz] = useState<string | null>(null);
+  // Live connections between dots, drawn as arcs on the map.
+  const [links, setLinks] = useState<LiveLink[]>([]);
 
   const [conn, _setConn] = useState<Conn>({ kind: "idle" });
   const connRef = useRef<Conn>(conn);
@@ -110,6 +115,7 @@ export default function Home() {
     setSafetyCode(null);
     setIVerified(false);
     setPeerVerified(false);
+    setPartnerTz(null);
     setConn({ kind: "idle" });
     if (message) showNotice(message);
   }
@@ -122,6 +128,9 @@ export default function Home() {
       onChat: (text) => addMessage(false, text),
       onControl: (ctrl) => handleControl(ctrl),
       onRemoteStream: (stream) => setRemoteStream(stream),
+      onPeerTimeZone: (tz) => {
+        if (peerRef.current === ps) setPartnerTz(tz);
+      },
       onConnectionState: (state) => {
         if (state === "failed") {
           // Tell the server so both busy flags are cleared — otherwise the
@@ -431,6 +440,7 @@ export default function Home() {
         const data = await poll(sessionId, offsetLocRef.current, profileRef.current);
         if (!active) return;
         setPeers(data.peers);
+        setLinks(data.links ?? []);
         for (const s of data.signals) processSignalRef.current(s);
         // Keep the partner's name/tags fresh; keep the last known copy if
         // their row is briefly missing so the header doesn't flicker.
@@ -476,11 +486,21 @@ export default function Home() {
   }
 
   const inChat = conn.kind === "connecting" || conn.kind === "connected";
+  // The partner's dot (privacy-offset, which is plenty for day vs night).
+  const partnerDot =
+    conn.kind === "idle" ? undefined : peers.find((p) => p.id === conn.peerId);
+  const clock = (
+    <PartnerClock
+      timeZone={partnerTz}
+      location={partnerDot ? { lat: partnerDot.lat, lng: partnerDot.lng } : null}
+    />
+  );
 
   return (
     <main className="fixed inset-0 overflow-hidden">
       <WorldMap
         peers={peers}
+        links={links}
         me={myLocation}
         myTags={myProfile.tags}
         onPeerClick={requestConnection}
@@ -531,6 +551,7 @@ export default function Home() {
           connected={conn.kind === "connected"}
           videoBusy={video !== "none"}
           safetyCode={safetyCode}
+          clock={clock}
           iVerified={iVerified}
           peerVerified={peerVerified}
           onConfirmCode={confirmSafetyCode}
@@ -587,6 +608,7 @@ export default function Home() {
               />
             )
           }
+          clock={clock}
           peerName={displayName(partner?.name)}
           onEnd={endVideo}
         />
