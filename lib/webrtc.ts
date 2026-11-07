@@ -4,7 +4,15 @@ export type PeerControl =
   | "video-accept"
   | "video-decline"
   | "video-end"
-  | "cam-off"; // sender joined the video call without a camera
+  // Sent at the start of every video call so the partner's "camera off"
+  // placeholder always reflects the current call, never a previous one.
+  | "cam-on"
+  | "cam-off"
+  | "mic-on"
+  | "mic-off";
+
+// Why our camera isn't in the call, if it isn't.
+export type CameraIssue = "not-found" | "blocked" | "busy" | null;
 
 interface PeerCallbacks {
   onSignal: (type: DescType, payload: string) => void;
@@ -26,6 +34,11 @@ export class PeerSession {
   private makingOffer = false;
   private ignoreOffer = false;
   private localStream: MediaStream | null = null;
+  // One long-lived stream holding the partner's incoming tracks. Senders are
+  // reused across video calls (replaceTrack, no renegotiation), so later
+  // calls fire no new "track" events — the page re-reads this instead.
+  private readonly remoteStream = new MediaStream();
+  cameraIssue: CameraIssue = null;
   private closed = false;
   private readonly cb: PeerCallbacks;
   private pendingCandidates: RTCIceCandidateInit[] = [];
@@ -53,8 +66,11 @@ export class PeerSession {
       }
     };
 
-    this.pc.ontrack = ({ streams }) => {
-      this.cb.onRemoteStream(streams[0] ?? null);
+    this.pc.ontrack = ({ track }) => {
+      if (!this.remoteStream.getTracks().includes(track)) {
+        this.remoteStream.addTrack(track);
+      }
+      this.cb.onRemoteStream(this.remoteStream);
     };
 
     this.pc.onconnectionstatechange = () => {
@@ -143,28 +159,65 @@ export class PeerSession {
     }
   }
 
+  // The partner's incoming media, or null if nothing has arrived yet.
+  getRemoteStream(): MediaStream | null {
+    return this.remoteStream.getTracks().length > 0 ? this.remoteStream : null;
+  }
+
   // Joins the video call with whatever media is available, best first:
   // camera + mic, camera only, mic only, then nothing (receive-only). A
   // missing or blocked camera therefore never declines the call — the other
   // side's tracks still arrive, since our answer simply becomes recvonly.
+  //
+  // The first call adds tracks (one negotiation). Later calls plug the new
+  // tracks into the same senders with replaceTrack, so the connection is
+  // never renegotiated just to toggle video — repeated renegotiation is what
+  // left the second call's video black.
   async startVideo(): Promise<MediaStream> {
     if (!this.localStream) {
-      this.localStream = await getBestMedia();
-      for (const track of this.localStream.getTracks()) {
-        this.pc.addTrack(track, this.localStream);
+      const { stream, issue } = await getBestMedia();
+      this.localStream = stream;
+      this.cameraIssue = issue;
+      for (const track of stream.getTracks()) {
+        const reusable = this.pc
+          .getTransceivers()
+          .find(
+            (t) =>
+              t.currentDirection !== "stopped" &&
+              t.sender.track === null &&
+              t.receiver.track.kind === track.kind,
+          );
+        if (reusable) {
+          await reusable.sender.replaceTrack(track);
+          reusable.sender.setStreams?.(stream);
+          // A transceiver created by the partner's offer is recvonly until
+          // we start sending on it (this one change does renegotiate).
+          if (reusable.direction === "recvonly") reusable.direction = "sendrecv";
+          else if (reusable.direction === "inactive") reusable.direction = "sendonly";
+        } else {
+          this.pc.addTrack(track, stream);
+        }
       }
     }
     return this.localStream;
   }
 
+  // In-call camera / mic toggle. Disabling a track sends black frames /
+  // silence on the same sender — no renegotiation, instant to switch back.
+  setTrackEnabled(kind: "audio" | "video", enabled: boolean) {
+    for (const track of this.localStream?.getTracks() ?? []) {
+      if (track.kind === kind) track.enabled = enabled;
+    }
+  }
+
+  // Stops our camera/mic but keeps the senders (track set to null) so the
+  // next call can reuse them without renegotiating.
   stopVideo() {
     if (this.localStream) {
       for (const track of this.localStream.getTracks()) track.stop();
       for (const sender of this.pc.getSenders()) {
         if (sender.track) {
-          try {
-            this.pc.removeTrack(sender);
-          } catch {}
+          void sender.replaceTrack(null).catch(() => {});
         }
       }
       this.localStream = null;
@@ -192,14 +245,29 @@ const MEDIA_FALLBACKS: MediaStreamConstraints[] = [
   { audio: true },
 ];
 
-async function getBestMedia(): Promise<MediaStream> {
-  if (!navigator.mediaDevices?.getUserMedia) return new MediaStream();
+async function getBestMedia(): Promise<{ stream: MediaStream; issue: CameraIssue }> {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    return { stream: new MediaStream(), issue: "not-found" };
+  }
+  let issue: CameraIssue = null;
   for (const constraints of MEDIA_FALLBACKS) {
     try {
-      return await navigator.mediaDevices.getUserMedia(constraints);
-    } catch {
-      // No such device, or permission denied — try the next option.
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      return {
+        stream,
+        issue: stream.getVideoTracks().length > 0 ? null : issue,
+      };
+    } catch (err) {
+      // Remember why the camera attempts failed, to tell the user.
+      if (constraints.video && issue === null) issue = classify(err);
     }
   }
-  return new MediaStream();
+  return { stream: new MediaStream(), issue: issue ?? "not-found" };
+}
+
+function classify(err: unknown): CameraIssue {
+  const name = err instanceof DOMException ? err.name : "";
+  if (name === "NotAllowedError" || name === "SecurityError") return "blocked";
+  if (name === "NotReadableError" || name === "AbortError") return "busy";
+  return "not-found";
 }

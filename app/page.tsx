@@ -34,6 +34,10 @@ export default function Home() {
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   // Partner joined the video call without a camera (told via "cam-off").
   const [remoteCamOff, setRemoteCamOff] = useState(false);
+  const [remoteMicOff, setRemoteMicOff] = useState(false);
+  // Our own in-call camera / mic toggles.
+  const [camOn, setCamOn] = useState(false);
+  const [micOn, setMicOn] = useState(false);
   const [myLocation, setMyLocation] = useState<{ lat: number; lng: number } | null>(
     null,
   );
@@ -84,6 +88,7 @@ export default function Home() {
     setLocalStream(null);
     setRemoteStream(null);
     setRemoteCamOff(false);
+    setRemoteMicOff(false);
     setVideo("none");
     setMessages([]);
     setPartner(null);
@@ -114,10 +119,30 @@ export default function Home() {
     peerRef.current = ps;
   }
 
-  // Let the partner know we joined without a camera, so they see a "camera
-  // off" placeholder instead of waiting for video that will never come.
-  function announceMedia(ps: PeerSession, stream: MediaStream) {
-    if (stream.getVideoTracks().length === 0) ps.sendControl("cam-off");
+  // Called once our side of a video call is live. Tells the partner whether
+  // our camera is on (every call, so their placeholder never goes stale),
+  // explains to us why it isn't, and picks up the partner's stream — on
+  // repeat calls no new "track" event fires, since senders are reused.
+  function onVideoLive(ps: PeerSession, stream: MediaStream) {
+    const hasCamera = stream.getVideoTracks().length > 0;
+    const hasMic = stream.getAudioTracks().length > 0;
+    setCamOn(hasCamera);
+    setMicOn(hasMic);
+    ps.sendControl(hasCamera ? "cam-on" : "cam-off");
+    ps.sendControl(hasMic ? "mic-on" : "mic-off");
+    const remote = ps.getRemoteStream();
+    if (remote) setRemoteStream(remote);
+    if (!hasCamera) {
+      const how =
+        stream.getAudioTracks().length > 0 ? "with audio only" : "without camera or mic";
+      showNotice(
+        ps.cameraIssue === "blocked"
+          ? `Camera blocked — joined ${how}. Allow it in your browser's site settings.`
+          : ps.cameraIssue === "busy"
+            ? `Camera is in use by another app — joined ${how}.`
+            : `No camera found — joined ${how}.`,
+      );
+    }
   }
 
   function handleControl(ctrl: PeerControl) {
@@ -132,7 +157,7 @@ export default function Home() {
             .then((stream) => {
               setLocalStream(stream);
               setVideo("active");
-              announceMedia(ps, stream);
+              onVideoLive(ps, stream);
             })
             .catch(() => {
               setVideo("none");
@@ -152,10 +177,20 @@ export default function Home() {
         setLocalStream(null);
         setRemoteStream(null);
         setRemoteCamOff(false);
+        setRemoteMicOff(false);
         setVideo("none");
+        break;
+      case "cam-on":
+        setRemoteCamOff(false);
         break;
       case "cam-off":
         setRemoteCamOff(true);
+        break;
+      case "mic-on":
+        setRemoteMicOff(false);
+        break;
+      case "mic-off":
+        setRemoteMicOff(true);
         break;
     }
   }
@@ -219,7 +254,7 @@ export default function Home() {
         setLocalStream(stream);
         ps.sendControl("video-accept");
         setVideo("active");
-        announceMedia(ps, stream);
+        onVideoLive(ps, stream);
       })
       .catch(() => {
         ps.sendControl("video-decline");
@@ -233,6 +268,24 @@ export default function Home() {
     setVideo("none");
   }
 
+  function toggleCam() {
+    const ps = peerRef.current;
+    if (!ps || !localStream?.getVideoTracks().length) return;
+    const next = !camOn;
+    ps.setTrackEnabled("video", next);
+    ps.sendControl(next ? "cam-on" : "cam-off");
+    setCamOn(next);
+  }
+
+  function toggleMic() {
+    const ps = peerRef.current;
+    if (!ps || !localStream?.getAudioTracks().length) return;
+    const next = !micOn;
+    ps.setTrackEnabled("audio", next);
+    ps.sendControl(next ? "mic-on" : "mic-off");
+    setMicOn(next);
+  }
+
   function endVideo() {
     const ps = peerRef.current;
     ps?.stopVideo();
@@ -240,6 +293,7 @@ export default function Home() {
     setLocalStream(null);
     setRemoteStream(null);
     setRemoteCamOff(false);
+    setRemoteMicOff(false);
     setVideo("none");
   }
 
@@ -446,6 +500,11 @@ export default function Home() {
           localStream={localStream}
           remoteStream={remoteStream}
           remoteCamOff={remoteCamOff}
+          remoteMicOff={remoteMicOff}
+          camOn={camOn}
+          micOn={micOn}
+          onToggleCam={toggleCam}
+          onToggleMic={toggleMic}
           peerName={displayName(partner?.name)}
           onEnd={endVideo}
         />
