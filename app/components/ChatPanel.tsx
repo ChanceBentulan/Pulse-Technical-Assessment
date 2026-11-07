@@ -3,6 +3,8 @@
 import { displayName } from "@/lib/profile";
 import ChatThread, { type ChatMessage } from "./ChatThread";
 import TagList from "./TagList";
+import SafetyCode from "./SafetyCode";
+import type { SafetySymbol } from "@/lib/safetyCode";
 
 export type { ChatMessage };
 
@@ -13,6 +15,11 @@ export default function ChatPanel({
   messages,
   connected,
   videoBusy,
+  safetyCode,
+  iVerified,
+  peerVerified,
+  onConfirmCode,
+  onRejectCode,
   onSend,
   onStartVideo,
   onEnd,
@@ -23,6 +30,11 @@ export default function ChatPanel({
   messages: ChatMessage[];
   connected: boolean;
   videoBusy: boolean;
+  safetyCode: SafetySymbol[] | null;
+  iVerified: boolean;
+  peerVerified: boolean;
+  onConfirmCode: () => void;
+  onRejectCode: () => void;
   onSend: (text: string) => void;
   onStartVideo: () => void;
   onEnd: () => void;
@@ -53,6 +65,20 @@ export default function ChatPanel({
           </button>
         </div>
       </header>
+
+      {connected && (
+        <div className="border-b border-zinc-800 px-4 pb-2.5">
+          <SafetyCode
+            code={safetyCode}
+            peerName={displayName(peerName)}
+            iVerified={iVerified}
+            peerVerified={peerVerified}
+            onConfirm={onConfirmCode}
+            onReject={onRejectCode}
+            onCompareByCall={!videoBusy ? onStartVideo : undefined}
+          />
+        </div>
+      )}
 
       <ChatThread messages={messages} connected={connected} onSend={onSend} />
     </div>
