@@ -32,6 +32,8 @@ export default function Home() {
   const [notice, setNotice] = useState<string | null>(null);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  // Partner joined the video call without a camera (told via "cam-off").
+  const [remoteCamOff, setRemoteCamOff] = useState(false);
   const [myLocation, setMyLocation] = useState<{ lat: number; lng: number } | null>(
     null,
   );
@@ -81,6 +83,7 @@ export default function Home() {
     peerRef.current = null;
     setLocalStream(null);
     setRemoteStream(null);
+    setRemoteCamOff(false);
     setVideo("none");
     setMessages([]);
     setPartner(null);
@@ -111,6 +114,12 @@ export default function Home() {
     peerRef.current = ps;
   }
 
+  // Let the partner know we joined without a camera, so they see a "camera
+  // off" placeholder instead of waiting for video that will never come.
+  function announceMedia(ps: PeerSession, stream: MediaStream) {
+    if (stream.getVideoTracks().length === 0) ps.sendControl("cam-off");
+  }
+
   function handleControl(ctrl: PeerControl) {
     const ps = peerRef.current;
     switch (ctrl) {
@@ -123,6 +132,7 @@ export default function Home() {
             .then((stream) => {
               setLocalStream(stream);
               setVideo("active");
+              announceMedia(ps, stream);
             })
             .catch(() => {
               setVideo("none");
@@ -141,7 +151,11 @@ export default function Home() {
         ps?.stopVideo();
         setLocalStream(null);
         setRemoteStream(null);
+        setRemoteCamOff(false);
         setVideo("none");
+        break;
+      case "cam-off":
+        setRemoteCamOff(true);
         break;
     }
   }
@@ -205,6 +219,7 @@ export default function Home() {
         setLocalStream(stream);
         ps.sendControl("video-accept");
         setVideo("active");
+        announceMedia(ps, stream);
       })
       .catch(() => {
         ps.sendControl("video-decline");
@@ -224,6 +239,7 @@ export default function Home() {
     ps?.sendControl("video-end");
     setLocalStream(null);
     setRemoteStream(null);
+    setRemoteCamOff(false);
     setVideo("none");
   }
 
@@ -429,6 +445,8 @@ export default function Home() {
         <VideoPanel
           localStream={localStream}
           remoteStream={remoteStream}
+          remoteCamOff={remoteCamOff}
+          peerName={displayName(partner?.name)}
           onEnd={endVideo}
         />
       )}
