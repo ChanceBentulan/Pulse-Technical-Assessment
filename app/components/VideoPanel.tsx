@@ -8,6 +8,8 @@ export default function VideoPanel({
   remoteStream,
   remoteCamOff,
   remoteMicOff,
+  peerSeesMe,
+  onRevealChange,
   peerName,
   camOn,
   micOn,
@@ -24,6 +26,10 @@ export default function VideoPanel({
   // Partner has no camera or turned it off; their audio (if any) still plays.
   remoteCamOff: boolean;
   remoteMicOff: boolean;
+  // Consent-first video: the partner has unblurred our video on their side.
+  peerSeesMe: boolean;
+  // Tells the partner whether we're now seeing their video unblurred.
+  onRevealChange: (revealed: boolean) => void;
   peerName: string;
   camOn: boolean;
   micOn: boolean;
@@ -38,6 +44,15 @@ export default function VideoPanel({
   onEnd: () => void;
 }) {
   const [chatOpen, setChatOpen] = useState(false);
+  // Consent-first video: a stranger's video starts blurred and only shows
+  // once we choose to see it. The panel mounts fresh for every call, so each
+  // call starts blurred again.
+  const [revealed, setRevealed] = useState(false);
+  function setReveal(next: boolean) {
+    setRevealed(next);
+    onRevealChange(next);
+  }
+  const remoteHasPicture = !!remoteStream && !remoteCamOff;
   // Messages already seen when the chat was last opened or closed; anything
   // newer from the partner counts as unread while the chat is hidden.
   const [seenCount, setSeenCount] = useState(messages.length);
@@ -78,8 +93,39 @@ export default function VideoPanel({
             ref={remoteRef}
             autoPlay
             playsInline
-            className="absolute inset-0 h-full w-full bg-zinc-900 object-cover"
+            className={`absolute inset-0 h-full w-full bg-zinc-900 object-cover transition-[filter,scale] duration-500 ${
+              revealed ? "" : "scale-110 blur-3xl"
+            }`}
           />
+          {remoteHasPicture && !revealed && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/30 px-6 text-center">
+              <EyeIcon off className="h-8 w-8 text-zinc-200" />
+              <p className="text-base font-semibold text-white">
+                {peerName}&rsquo;s video is blurred
+              </p>
+              <p className="max-w-xs text-sm text-zinc-300">
+                Pulse blurs video from strangers until you choose to see it. You
+                can still hear each other.
+              </p>
+              <button
+                onClick={() => setReveal(true)}
+                className="mt-1 rounded-full bg-white px-6 py-2.5 text-sm font-semibold text-zinc-950 hover:bg-zinc-200"
+              >
+                Show video
+              </button>
+            </div>
+          )}
+          {remoteHasPicture && revealed && (
+            <button
+              onClick={() => setReveal(false)}
+              aria-label={`Blur ${peerName}'s video`}
+              title="Blur their video"
+              className="absolute right-4 top-4 flex items-center gap-1.5 rounded-full bg-zinc-900/80 px-3 py-1.5 text-xs text-zinc-200 backdrop-blur hover:bg-zinc-800"
+            >
+              <EyeIcon off className="h-3.5 w-3.5" />
+              Blur
+            </button>
+          )}
           {remoteCamOff ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-zinc-900 text-center text-zinc-400">
               <div className="flex h-16 w-16 items-center justify-center rounded-full bg-zinc-800 text-2xl font-bold text-zinc-300">
@@ -118,6 +164,13 @@ export default function VideoPanel({
               <span className="text-zinc-500">
                 {!localHasAudio ? "Watching only" : micOn ? "Mic on" : "Muted"}
               </span>
+            </div>
+          )}
+          {localHasVideo && camOn && (
+            // Lets us know whether the stranger can actually see us yet.
+            <div className="absolute bottom-[11.5rem] right-4 flex w-28 items-center justify-center gap-1 rounded-full bg-zinc-900/80 px-2 py-1 text-[10px] text-zinc-300 backdrop-blur">
+              <EyeIcon off={!peerSeesMe} className="h-3 w-3" />
+              {peerSeesMe ? "They see you" : "Blurred for them"}
             </div>
           )}
         </div>
@@ -270,6 +323,25 @@ function CamIcon({ off, className }: { off?: boolean; className?: string }) {
       <rect x="3" y="7" width="12" height="10" rx="2" />
       <path d="M15 10.5l6-3.5v10l-6-3.5" />
       {off && <path d="M3 4l17 17" />}
+    </svg>
+  );
+}
+
+function EyeIcon({ off, className }: { off?: boolean; className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden
+    >
+      <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z" />
+      <circle cx="12" cy="12" r="3" />
+      {off && <path d="M3 3l18 18" />}
     </svg>
   );
 }

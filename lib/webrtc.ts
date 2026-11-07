@@ -14,7 +14,11 @@ export type PeerControl =
   | "mic-off"
   // Safety code outcome, so the partner sees what we concluded.
   | "code-verified"
-  | "code-mismatch";
+  | "code-mismatch"
+  // Consent-first video: whether we've unblurred the partner's video, so they
+  // know if we can actually see them.
+  | "video-revealed"
+  | "video-hidden";
 
 // Why our camera isn't in the call, if it isn't.
 export type CameraIssue = "not-found" | "blocked" | "busy" | null;
