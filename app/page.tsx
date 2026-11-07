@@ -81,6 +81,12 @@ export default function Home() {
     setMessages((prev) => [...prev, { id: msgId.current++, mine, text }]);
   }
 
+  // Used by both the chat sidebar and the in-call chat (same thread).
+  function sendChat(text: string) {
+    peerRef.current?.sendChat(text);
+    addMessage(true, text);
+  }
+
   function teardown(message?: string) {
     if (requestTimer.current) clearTimeout(requestTimer.current);
     peerRef.current?.close();
@@ -469,10 +475,7 @@ export default function Home() {
           messages={messages}
           connected={conn.kind === "connected"}
           videoBusy={video !== "none"}
-          onSend={(text) => {
-            peerRef.current?.sendChat(text);
-            addMessage(true, text);
-          }}
+          onSend={sendChat}
           onStartVideo={startVideoRequest}
           onEnd={endConnection}
         />
@@ -505,6 +508,9 @@ export default function Home() {
           micOn={micOn}
           onToggleCam={toggleCam}
           onToggleMic={toggleMic}
+          messages={messages}
+          chatConnected={conn.kind === "connected"}
+          onSendChat={sendChat}
           peerName={displayName(partner?.name)}
           onEnd={endVideo}
         />
