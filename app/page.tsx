@@ -37,6 +37,8 @@ export default function Home() {
   // Partner joined the video call without a camera (told via "cam-off").
   const [remoteCamOff, setRemoteCamOff] = useState(false);
   const [remoteMicOff, setRemoteMicOff] = useState(false);
+  // Partner has unblurred our video (consent-first video starts blurred).
+  const [peerSeesMe, setPeerSeesMe] = useState(false);
   // Our own in-call camera / mic toggles.
   const [camOn, setCamOn] = useState(false);
   const [micOn, setMicOn] = useState(false);
@@ -101,6 +103,7 @@ export default function Home() {
     setRemoteStream(null);
     setRemoteCamOff(false);
     setRemoteMicOff(false);
+    setPeerSeesMe(false);
     setVideo("none");
     setMessages([]);
     setPartner(null);
@@ -197,6 +200,7 @@ export default function Home() {
         setRemoteStream(null);
         setRemoteCamOff(false);
         setRemoteMicOff(false);
+        setPeerSeesMe(false);
         setVideo("none");
         break;
       case "cam-on":
@@ -213,6 +217,12 @@ export default function Home() {
         break;
       case "code-verified":
         setPeerVerified(true);
+        break;
+      case "video-revealed":
+        setPeerSeesMe(true);
+        break;
+      case "video-hidden":
+        setPeerSeesMe(false);
         break;
       case "code-mismatch": {
         // The partner saw a different code: treat the link as compromised.
@@ -344,6 +354,7 @@ export default function Home() {
     setRemoteStream(null);
     setRemoteCamOff(false);
     setRemoteMicOff(false);
+    setPeerSeesMe(false);
     setVideo("none");
   }
 
@@ -553,6 +564,10 @@ export default function Home() {
           remoteStream={remoteStream}
           remoteCamOff={remoteCamOff}
           remoteMicOff={remoteMicOff}
+          peerSeesMe={peerSeesMe}
+          onRevealChange={(revealed) =>
+            peerRef.current?.sendControl(revealed ? "video-revealed" : "video-hidden")
+          }
           camOn={camOn}
           micOn={micOn}
           onToggleCam={toggleCam}
