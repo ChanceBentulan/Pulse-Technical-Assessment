@@ -16,6 +16,10 @@ model Presence {
   lat      Float // ALREADY privacy-offset coords (raw is never stored)
   lng      Float
   busy     Boolean  @default(false) // true while in an active connection
+  // Who they're connected to (set on accept, cleared on end). Only used to
+  // draw live connection arcs; a pair counts only if both rows point at each
+  // other, so a dangling value left by a vanished partner is harmless.
+  partnerId String?
   name     String? // optional display name (sanitised server-side)
   tags     String[] @default([]) // interest tags (sanitised server-side)
   lastSeen DateTime

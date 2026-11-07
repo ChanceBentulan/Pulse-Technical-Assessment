@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { STALE_MS, SIGNAL_TTL_MS } from "@/lib/presence";
 import { isValidLatLng } from "@/lib/geo";
 import { sanitizeName, sanitizeTags } from "@/lib/profile";
-import type { PollResponse } from "@/lib/types";
+import type { LiveLink, PollResponse } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -54,14 +54,34 @@ export async function GET(request: NextRequest) {
   await prisma.presence.deleteMany({ where: { lastSeen: { lt: staleCutoff } } });
   await prisma.signal.deleteMany({ where: { createdAt: { lt: signalCutoff } } });
 
-  // 3) Online peers, excluding self.
-  const peers = await prisma.presence.findMany({
-    where: {
-      id: { not: id },
-      lastSeen: { gte: staleCutoff },
+  // 3) Everyone online (self included, so our own connection gets an arc
+  // too); peers are everyone else.
+  const online = await prisma.presence.findMany({
+    where: { lastSeen: { gte: staleCutoff } },
+    select: {
+      id: true,
+      lat: true,
+      lng: true,
+      busy: true,
+      name: true,
+      tags: true,
+      partnerId: true,
     },
-    select: { id: true, lat: true, lng: true, busy: true, name: true, tags: true },
   });
+  const peers = online.filter((p) => p.id !== id);
+
+  // Live connection arcs: pairs whose rows point at each other, once each.
+  const byId = new Map(online.map((p) => [p.id, p]));
+  const links: LiveLink[] = [];
+  for (const p of online) {
+    if (!p.partnerId || p.id > p.partnerId) continue;
+    const q = byId.get(p.partnerId);
+    if (q?.partnerId !== p.id || !p.busy || !q.busy) continue;
+    links.push({
+      from: { lat: p.lat, lng: p.lng },
+      to: { lat: q.lat, lng: q.lng },
+    });
+  }
 
   // 4) Drain this user's mailbox: read, then delete exactly what we read so a
   // concurrently-inserted signal is never lost.
@@ -84,6 +104,7 @@ export async function GET(request: NextRequest) {
       name: p.name,
       tags: p.tags,
     })),
+    links,
     signals: inbox.map((s) => ({
       id: s.id,
       fromId: s.fromId,

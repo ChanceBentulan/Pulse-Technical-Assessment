@@ -19,6 +19,7 @@ export default function VideoPanel({
   chatConnected,
   onSendChat,
   safetyCode,
+  clock,
   onEnd,
 }: {
   localStream: MediaStream | null;
@@ -41,6 +42,8 @@ export default function VideoPanel({
   onSendChat: (text: string) => void;
   // The connection's safety code badge/card, shown atop the in-call chat.
   safetyCode?: React.ReactNode;
+  // Partner's local time / day-night, under the in-call chat title.
+  clock?: React.ReactNode;
   onEnd: () => void;
 }) {
   const [chatOpen, setChatOpen] = useState(false);
@@ -179,7 +182,10 @@ export default function VideoPanel({
           // Overlays the video on small screens, sits beside it on wider ones.
           <aside className="absolute inset-x-0 bottom-20 top-0 z-10 flex flex-col border-zinc-800 bg-zinc-950/95 text-zinc-100 backdrop-blur sm:static sm:w-80 sm:border-l sm:bg-zinc-950">
             <header className="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
-              <p className="text-sm font-semibold">Chat with {peerName}</p>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold">Chat with {peerName}</p>
+                {clock}
+              </div>
               <button
                 onClick={toggleChat}
                 aria-label="Close chat"

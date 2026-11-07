@@ -16,6 +16,7 @@ export default function ChatPanel({
   connected,
   videoBusy,
   safetyCode,
+  clock,
   iVerified,
   peerVerified,
   onConfirmCode,
@@ -31,6 +32,8 @@ export default function ChatPanel({
   connected: boolean;
   videoBusy: boolean;
   safetyCode: SafetySymbol[] | null;
+  // Partner's local time / day-night (see PartnerClock).
+  clock?: React.ReactNode;
   iVerified: boolean;
   peerVerified: boolean;
   onConfirmCode: () => void;
@@ -47,6 +50,7 @@ export default function ChatPanel({
           <p className="text-xs text-zinc-500">
             {connected ? "Connected" : "Connecting…"}
           </p>
+          {clock && <div className="mt-0.5">{clock}</div>}
           <TagList tags={peerTags} myTags={myTags} className="mt-1.5" />
         </div>
         <div className="flex shrink-0 gap-2">

@@ -30,6 +30,8 @@ interface PeerCallbacks {
   onRemoteStream: (stream: MediaStream | null) => void;
   onConnectionState: (state: RTCPeerConnectionState) => void;
   onChannelOpen: () => void;
+  // Partner's IANA time zone (e.g. "Asia/Tokyo"), for their local clock.
+  onPeerTimeZone: (tz: string) => void;
 }
 
 const ICE_CONFIG: RTCConfiguration = {
@@ -98,7 +100,13 @@ export class PeerSession {
   }
 
   private wireDataChannel(dc: RTCDataChannel) {
-    dc.onopen = () => this.cb.onChannelOpen();
+    dc.onopen = () => {
+      // Share our time zone peer-to-peer (never via the server) so the
+      // partner can show what time it is for us.
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (tz) this.safeSend({ t: "tz", tz });
+      this.cb.onChannelOpen();
+    };
     dc.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data as string);
@@ -106,6 +114,8 @@ export class PeerSession {
           this.cb.onChat(msg.text);
         } else if (msg.t === "ctrl" && typeof msg.ctrl === "string") {
           this.cb.onControl(msg.ctrl as PeerControl);
+        } else if (msg.t === "tz" && isValidTimeZone(msg.tz)) {
+          this.cb.onPeerTimeZone(msg.tz);
         }
       } catch {}
     };
@@ -290,4 +300,17 @@ function classify(err: unknown): CameraIssue {
   if (name === "NotAllowedError" || name === "SecurityError") return "blocked";
   if (name === "NotReadableError" || name === "AbortError") return "busy";
   return "not-found";
+}
+
+// Partner input: accept only a real IANA zone name that Intl understands.
+function isValidTimeZone(tz: unknown): tz is string {
+  if (typeof tz !== "string" || tz.length > 64 || !/^[A-Za-z0-9_+\-/]+$/.test(tz)) {
+    return false;
+  }
+  try {
+    new Intl.DateTimeFormat("en", { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
 }
