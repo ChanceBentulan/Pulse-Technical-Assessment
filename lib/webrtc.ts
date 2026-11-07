@@ -3,7 +3,8 @@ export type PeerControl =
   | "video-request"
   | "video-accept"
   | "video-decline"
-  | "video-end";
+  | "video-end"
+  | "cam-off"; // sender joined the video call without a camera
 
 interface PeerCallbacks {
   onSignal: (type: DescType, payload: string) => void;
@@ -142,12 +143,13 @@ export class PeerSession {
     }
   }
 
+  // Joins the video call with whatever media is available, best first:
+  // camera + mic, camera only, mic only, then nothing (receive-only). A
+  // missing or blocked camera therefore never declines the call — the other
+  // side's tracks still arrive, since our answer simply becomes recvonly.
   async startVideo(): Promise<MediaStream> {
     if (!this.localStream) {
-      this.localStream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-        audio: true,
-      });
+      this.localStream = await getBestMedia();
       for (const track of this.localStream.getTracks()) {
         this.pc.addTrack(track, this.localStream);
       }
@@ -182,4 +184,22 @@ export class PeerSession {
       this.pc.close();
     } catch {}
   }
+}
+
+const MEDIA_FALLBACKS: MediaStreamConstraints[] = [
+  { video: true, audio: true },
+  { video: true },
+  { audio: true },
+];
+
+async function getBestMedia(): Promise<MediaStream> {
+  if (!navigator.mediaDevices?.getUserMedia) return new MediaStream();
+  for (const constraints of MEDIA_FALLBACKS) {
+    try {
+      return await navigator.mediaDevices.getUserMedia(constraints);
+    } catch {
+      // No such device, or permission denied — try the next option.
+    }
+  }
+  return new MediaStream();
 }
